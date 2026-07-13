@@ -13,6 +13,26 @@
 
 ---
 
+## Sessão 2026-07-13 — Criação em massa de usuários no ChatND
+
+**O que foi feito:** criados os usuários iniciais do ChatND a partir do CSV
+`TEC_UsuariosChatND_13072026_V1.csv` (53 linhas), via API admin do Open WebUI
+(`POST /api/v1/auths/add`), papel `user`.
+
+- **Resultado (execução real):** criados **44**, pulados **9** (já existiam), **0 erros**.
+- **Política adotada:** senha provisória **única e padrão** para todos, definida pelo
+  responsável em **variável de ambiente** (nunca em arquivo/código/diário); usuários
+  **orientados a trocá-la no primeiro acesso**.
+- **Validação antes de criar** (conferida no dry-run): rejeita e-mail fora do domínio
+  `nidumbrasil.com.br`, pula duplicados no CSV e usuários **já existentes** — comparação
+  por e-mail **normalizado** (minúsculas, sem espaços). No CSV: 0 rejeitados, 0 duplicados.
+- **Ferramenta versionada:** `_nidum_manutencao/criar_usuarios_em_massa.py` — DRY-RUN por
+  padrão; modo real só com `--executar`; credenciais **apenas** por env
+  (`ADMIN_TOKEN`, `SENHA_PROVISORIA`).
+- **Autocadastro (signup):** encontrado **LIGADO**. Recomendação registrada de
+  **DESLIGAR** agora que as 44 contas foram pré-criadas
+  (Admin → Configurações → Geral → “Ativar Novos Cadastros”).
+
 ## Sessão 2026-07-10 — Versionamento do código e das docs no Git (fonte da verdade)
 
 **Regra permanente adotada:** o **Git é a fonte da verdade do código**. A plataforma
