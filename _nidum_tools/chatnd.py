@@ -1286,17 +1286,29 @@ def _montar_contexto_web(resultados, maximo):
     return aviso + "\n\n".join(blocos)
 
 
-_RE_MARCA_TEMPORAL = re.compile(
-    r"reuni\w*|\bata\b|converg\w*|\bquando\b|\d{1,2}/\d{1,2}"
-    r"|\bde\s+\d{1,2}\s+de\s+\w+\s+de\s+\d{4}\b",
+# PALAVRAS que sinalizam atividade REGISTRADA da Nidum (a esteira publica atas e
+# convergencias). As DATAS saem daqui: a deteccao de data agora e a MESMA do
+# _expandir_datas (via _datas_no_texto), para "tem data" significar UMA coisa so no
+# pipe. Antes eram dois criterios: o regex daqui casava so 'dd/mm' e o extenso; o
+# _expandir_datas casava tudo. O sintoma foi um log que se contradizia - "trava temporal
+# -> documentos" ao lado de "busca -> sem data na pergunta" na MESMA string (ano solto).
+_RE_MARCA_KEYWORD = re.compile(
+    r"reuni\w*|\bata\b|converg\w*|\bquando\b",
     re.IGNORECASE,
 )
 
 
-def _tem_marca_temporal(texto):
-    # Marca temporal/reuniao: data, 'reuniao', 'ata', 'convergencia', 'quando', ou
-    # "de <dia> de <mes> de <ano>". Usado pelo guard deterministico do roteador.
-    return bool(_RE_MARCA_TEMPORAL.search(texto or ""))
+def _tem_marca_temporal(texto, hoje=None):
+    # Guard deterministico do roteador: pergunta que sinaliza acervo da Nidum e forcada
+    # para 'documentos'. Dispara por PALAVRA (reuniao/ata/convergencia/quando) OU por uma
+    # DATA de verdade - e "data de verdade" e o que o _datas_no_texto reconhece, o MESMO
+    # detector da busca. Ano solto (2026) NAO e data para nenhum dos dois: elas tem dia e
+    # mes. Assinatura com hoje= por simetria com _expandir_datas (year-inference de dd/mm);
+    # nao muda se um texto TEM data, so qual ano - a existencia e estavel.
+    t = texto or ""
+    if _RE_MARCA_KEYWORD.search(t):
+        return True
+    return bool(_datas_no_texto(t, hoje or datetime.date.today()))
 
 
 # Palavra INTEIRA, sem acento, caixa ignorada. \b nas duas pontas de proposito:
