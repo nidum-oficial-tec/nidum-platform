@@ -13,6 +13,44 @@
 
 ---
 
+## 🏁 CICLO FECHADO (18-07-2026) — a reforma do chat único, de 1.29 a 1.36
+
+**O ChatND deixou de ser roteador de 6 caixas e virou uma fronteira: *é da Nidum, ou não é?***
+Institucional → base, nunca web. Geral → web, nunca base. Validado em produção, dos dois
+lados.
+
+| Versão | O que entregou | Como foi provado |
+|---|---|---|
+| **1.29** | arranca a doutrina morta (piso do gatilho, `_docs_prioritarios`) | código morto medido |
+| **1.30** | hotfix: `raciocinio` respondia sem base | grep no log: rota nunca escolhida |
+| **1.31** | 6 rotas → 4 (`geral` nasce) + travas determinísticas | banco 18/19 |
+| **1.32** | tarefa interna sai do pipe (⅔ do trabalho eram fantasma) | log: 9 → 1 montagem/77s |
+| **1.33** | `geral` vira lista fechada | *(não consertou a Q12 — registrado)* |
+| **1.34** | termos canônicos (a Q12 vira) | `classificador='documentos'` sozinho |
+| **1.35** | expansão de datas só na pergunta atual | teste reproduz o bug + banco 8/8 |
+| **1.36** | web na rota `geral` | duas sondas + banco 8/8, fronteira estanque |
+
+**O que fica além do código — as regras que a reforma pariu, todas no `CLAUDE.md`:**
+1. **Doc de produção mergeia com o deploy, não antes** (a doc apodrecia por *seguir* a
+   regra antiga).
+2. **Teoria sobre prompt é hipótese, não diagnóstico** — 2 de 3 refutadas por teste.
+3. **"O modelo SABE o que precisa saber?"** — a pergunta que separa *não entendeu*
+   (redija melhor) de *não sabia* (dê informação).
+4. **Padrão que funcionou 3 vezes é o que você para de checar** — `py_compile` passava e o
+   changelog mentia.
+5. **8 (cirúrgico) vs 20 (estrutural)** no banco, com a exceção sempre justificada.
+
+**O método que sustentou tudo:** nada entrou por parecer certo. **Cada corte teve o painel,
+o banco ou o log ao lado; cada teoria minha foi testada, e as erradas ficaram registradas
+com o nome de erradas.** As três hipóteses que refutei valem tanto quanto os oito consertos
+— porque é o registro delas que impede a próxima pessoa (ou o próximo eu) de reabri-las.
+
+> **Pendente, e é só operação, não engenharia:** apagar as duas sondas
+> (`sonda_web_search`, `sonda_search_web`) e o wrapper *"Sonda - Teste"* da Amanda. A
+> reforma em si está fechada.
+
+---
+
 ## Sessão 2026-07-18 (fatia 3) — A web entra pela rota `geral`, e o desenho do chat único fecha
 
 **A reforma está completa.** O `chatnd` agora é:
@@ -85,6 +123,47 @@ conhecimento do próprio modelo — o `except` não derruba a resposta.
 - Apagar a **sonda 1** (`sonda_web_search`), ainda publicada.
 - Apagar a **sonda 2** (`sonda_search_web`).
 - Apagar o wrapper **"Sonda - Teste"**, criado para dar acesso à Amanda.
+## Sessão 2026-07-18 — Banco 8/8 na 1.35.0; o custo aceito foi exercitado, e saiu barato
+
+**Bateria reduzida (8) na 1.35.0: 8/8.** A reforma inteira (1.29 → 1.35) fechada e medida.
+
+| Pergunta | Resultado |
+|---|---|
+| **Q18** (prova a fatia C) | `[Fora do acervo]`, recuperou atas de 13/07 e 15/07, **zero variantes de outra pergunta** |
+| **Q12** | `[Fonte]`, v30 — **a regressão morreu de vez** |
+| **Q14** | melhorou: distinguiu *"não registra decisões no sentido estrito — registra evoluções e encaminhamentos"* |
+| Q1, Q5, Q9, Q20 | OK |
+
+### 🎯 O custo da trava 3 foi exercitado na primeira semana — e a assimetria se confirmou
+
+O caso que o `teste_travas` marca como **custo aceito** aconteceu de verdade:
+
+> **Pergunta:** *"vi um ninho de passarinho no quintal"*
+> **Rota:** `documentos` (o termo `ninho` disparou) → busca → **`[Fora do acervo]`**
+> **Resposta:** *"Que presente. Um ninho no quintal é exatamente o tipo de coisa que para
+> tudo. Se quiser conversar sobre a Nidum, estou aqui."*
+
+**O falso positivo custou ~1 segundo e uma resposta simpática** — não uma resposta quebrada,
+não um erro visível. O modelo recebeu `[Fora do acervo]`, **não forçou nada**, e conversou.
+
+> ### **O lado caro é o que a trava impede; o lado barato é o que ela às vezes cobra — e o barato saiu mais barato ainda do que o teste supunha.**
+>
+> **Medido, não suposto.** O custo que eu pedi para deixar "visível no teste" agora tem um
+> exemplo real ao lado: o falso positivo (o lado barato) não só é raro como, quando ocorre,
+> vira uma conversa agradável — enquanto o falso negativo que a trava evita seria doutrina
+> inventada sobre a Nidum, com cara de fundamentada.
+
+### Nota de método: 8 rodadas, não 20 — e a regra que ficou
+
+Rodei **8 (reduzido)**, não as 20. É escolha de custo, e virou **regra no banco**
+(`testes/banco_perguntas_chatnd.md`, esteira):
+
+> **8 (reduzido) para mudança CIRÚRGICA; 20 (completo) para ESTRUTURAL.** As 12 cortadas
+> passam estável há três rodadas — rodá-las de novo mede o que já foi medido.
+
+**Por que registrar:** sem a regra, *"rodei 8"* parece corte de canto. Com ela, é decisão
+proporcional ao risco — e diz ao próximo **quando 8 não basta**: qualquer coisa que mexa em
+roteador, busca ou nas travas volta a exigir 20.
 
 ## Sessão 2026-07-17 (noite) — A teoria do catch-all foi demolida, e a demolição vale mais que o conserto
 
