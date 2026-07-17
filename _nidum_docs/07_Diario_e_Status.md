@@ -13,6 +13,48 @@
 
 ---
 
+## Sessão 2026-07-18 — Banco 8/8 na 1.35.0; o custo aceito foi exercitado, e saiu barato
+
+**Bateria reduzida (8) na 1.35.0: 8/8.** A reforma inteira (1.29 → 1.35) fechada e medida.
+
+| Pergunta | Resultado |
+|---|---|
+| **Q18** (prova a fatia C) | `[Fora do acervo]`, recuperou atas de 13/07 e 15/07, **zero variantes de outra pergunta** |
+| **Q12** | `[Fonte]`, v30 — **a regressão morreu de vez** |
+| **Q14** | melhorou: distinguiu *"não registra decisões no sentido estrito — registra evoluções e encaminhamentos"* |
+| Q1, Q5, Q9, Q20 | OK |
+
+### 🎯 O custo da trava 3 foi exercitado na primeira semana — e a assimetria se confirmou
+
+O caso que o `teste_travas` marca como **custo aceito** aconteceu de verdade:
+
+> **Pergunta:** *"vi um ninho de passarinho no quintal"*
+> **Rota:** `documentos` (o termo `ninho` disparou) → busca → **`[Fora do acervo]`**
+> **Resposta:** *"Que presente. Um ninho no quintal é exatamente o tipo de coisa que para
+> tudo. Se quiser conversar sobre a Nidum, estou aqui."*
+
+**O falso positivo custou ~1 segundo e uma resposta simpática** — não uma resposta quebrada,
+não um erro visível. O modelo recebeu `[Fora do acervo]`, **não forçou nada**, e conversou.
+
+> ### **O lado caro é o que a trava impede; o lado barato é o que ela às vezes cobra — e o barato saiu mais barato ainda do que o teste supunha.**
+>
+> **Medido, não suposto.** O custo que eu pedi para deixar "visível no teste" agora tem um
+> exemplo real ao lado: o falso positivo (o lado barato) não só é raro como, quando ocorre,
+> vira uma conversa agradável — enquanto o falso negativo que a trava evita seria doutrina
+> inventada sobre a Nidum, com cara de fundamentada.
+
+### Nota de método: 8 rodadas, não 20 — e a regra que ficou
+
+Rodei **8 (reduzido)**, não as 20. É escolha de custo, e virou **regra no banco**
+(`testes/banco_perguntas_chatnd.md`, esteira):
+
+> **8 (reduzido) para mudança CIRÚRGICA; 20 (completo) para ESTRUTURAL.** As 12 cortadas
+> passam estável há três rodadas — rodá-las de novo mede o que já foi medido.
+
+**Por que registrar:** sem a regra, *"rodei 8"* parece corte de canto. Com ela, é decisão
+proporcional ao risco — e diz ao próximo **quando 8 não basta**: qualquer coisa que mexa em
+roteador, busca ou nas travas volta a exigir 20.
+
 ## Sessão 2026-07-17 (noite) — A teoria do catch-all foi demolida, e a demolição vale mais que o conserto
 
 **A fatia B (1.33.0) foi ao ar e NÃO consertou a Q12.** Mesma pergunta, mesmo veredito:
