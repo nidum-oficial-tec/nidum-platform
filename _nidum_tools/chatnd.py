@@ -1,9 +1,36 @@
 """
 title: ChatND
 author: Nidum
-version: 1.38.0
+version: 1.39.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.39.0:
+    - WEB RECENCIA (saida 2): o pipe chama o TAVILY DIRETO, para pedir os params que o
+      wrapper do OWUI nao pede. O tavily.py do OWUI manda so {query, max_results} - e e
+      100% UPSTREAM (patchear = conflito em todo rebase, dividida do editorial). E ele nao
+      SABE a intencao da pergunta; recencia por-pergunta exige atravessar 2 arquivos
+      upstream. So o pipe tem a pergunta + o veredito do classificador. Por isso Saida 2,
+      nao patch (Saida 1).
+    - NAO e o encapsulamento da Anthropic: o Tavily e FERRAMENTA (um POST com JSON), nao o
+      provedor do modelo. _tavily_buscar sao ~30 linhas nossas, aiohttp, devolve o mesmo
+      formato que _montar_contexto_web ja consome.
+    - '| recente' pelo CLASSIFICADOR (juiz, nao regex - a licao do 'quando'): mesmo
+      mecanismo do '| triade', mesmo parsing ('recente' in saida). Vies "na duvida,
+      marque recente" - falso positivo faz a busca priorizar o novo (barato); falso
+      negativo entrega dado velho como atual (a dor). E o "na duvida, base" no outro eixo.
+    - ECONOMIA (ponto do Davi): search_depth='advanced' custa 2 creditos (basico=1) no
+      free tier de 1.000/mes. Advanced/topic/days SO quando 'recente' - o atemporal
+      ('quem foi Getulio Vargas') fica no basico e preserva a folga.
+    - FALLBACK: se WEB_TAVILY_DIRETO=off OU a TAVILY_API_KEY falta, cai no search_web
+      (engine do dropdown). Nunca fica sem web por config.
+    - PARAMS PROVISORIOS - saem da SONDA, nao de memoria: WEB_RECENTE_DAYS (janela),
+      WEB_RECENTE_TOPIC (news ajuda jogo, pode atrapalhar cotacao), WEB_RECENTE_RAW
+      (pagina inteira vs snippet), WEB_MAX_RESULTADOS. A sonda 3 mede no par Santos/dolar
+      antes de fixar. Diario registra: a rota geral estava recebendo 693-2726 chars
+      (contra ~44k da institucional) - migalha.
+    - LOG NAO ESTAVA CEGO: era o filtro do Railway do Davi (buscava 'web ->'; achou com
+      'chatnd: web'). Item do "log cego" MORTO - nao era versao nem Railway, era a busca.
+      O fail-loud da 1.38.0 fica como REFORCO (WARNING no vazio vale por si), nao conserto.
   1.38.0:
     - WEB (rota geral): reforca a instrucao de RECENCIA e torna o log FAIL-LOUD. Nao
       troca a engine - isso e decisao de painel (ver sonda de recencia).
@@ -651,8 +678,16 @@ CLASSIFICADOR = (
     "MOVIMENTO, RELACAO, GERACAO ou TRANSFORMACAO (ex.: 'como os ecossistemas "
     "podem interagir para gerar regeneracao num ecossistema'), acrescente ' | "
     "triade' APOS a palavra-chave. Para pedidos de INVENTARIO, DEFINICAO ou FATO "
-    "(ex.: 'quais os ecossistemas da Nidum'), NAO acrescente. Exemplos validos: "
-    "'documentos | triade', 'documentos', 'geral'."
+    "(ex.: 'quais os ecossistemas da Nidum'), NAO acrescente.\n"
+    "MARCADOR DE RECENCIA (recente) - se a categoria for 'geral' E a pergunta for sobre "
+    "o ESTADO ATUAL do mundo (cotacao/preco de hoje, placar de ontem, noticia recente, "
+    "'ultimo/atual/agora/quem ganhou/quanto esta/quem e hoje'), acrescente ' | recente' "
+    "APOS a palavra-chave. Pergunta ATEMPORAL ('quem foi Getulio Vargas', 'como funciona "
+    "um motor', 'traduza X') NAO leva. NA DUVIDA, MARQUE recente - marcar a mais so faz a "
+    "busca priorizar o novo (barato); marcar a menos entrega dado velho como atual (a dor). "
+    "Exemplos: 'geral | recente' (cotacao do dolar hoje), 'geral' (quem foi Getulio "
+    "Vargas).\n"
+    "Exemplos validos: 'documentos | triade', 'documentos', 'geral | recente', 'geral'."
 )
 
 GERADOR = (
@@ -1289,6 +1324,50 @@ def _montar_contexto(sources):
     return "\n\n".join(blocos)
 
 
+async def _tavily_buscar(api_key, query, *, max_results=3, search_depth="basic",
+                         topic=None, days=None, raw_content=False, timeout=20):
+    # Chama a API do Tavily DIRETO, para pedir os params de recencia que o wrapper do OWUI
+    # (retrieval/web/tavily.py) nao pede - ele manda so {query, max_results}. NAO e o
+    # problema de encapsulamento do provedor do modelo (a Anthropic): o Tavily e uma
+    # FERRAMENTA, e isto e um POST com um JSON. Devolve list[dict] {title, link, snippet}
+    # - o mesmo formato que o _montar_contexto_web/_campo ja consomem (via getattr/dict).
+    #
+    # PARAMETRIZADO de proposito: a JANELA certa (days), se topic='news' ajuda ou atrapalha
+    # (jogo e noticia; cotacao nao e), e se raw_content vale o peso - tudo isso SAI DA
+    # SONDA, medido no par Santos/dolar, nao chutado. Aqui so o encanamento.
+    import aiohttp
+
+    payload = {"query": query, "max_results": max(1, int(max_results or 3)),
+               "search_depth": search_depth}
+    if topic:
+        payload["topic"] = topic          # 'news' restringe a artigos de noticia
+    if days:
+        payload["days"] = int(days)        # janela de recencia (so faz efeito com news)
+    if raw_content:
+        payload["include_raw_content"] = True   # texto da pagina, nao so o snippet
+    headers = {"Content-Type": "application/json",
+               "Authorization": "Bearer " + api_key}
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post("https://api.tavily.com/search", json=payload,
+                                 headers=headers,
+                                 timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+    except Exception:
+        # Deixa o CHAMADOR logar o VAZIO como WARNING (fail-loud). Web e extra: falha aqui
+        # nao derruba a conversa, o modelo segue com o proprio conhecimento.
+        log.exception("chatnd: tavily-direto falhou")
+        return []
+    out = []
+    for r in (data.get("results") or []):
+        # raw_content quando pedido (pagina inteira); senao content (snippet).
+        trecho = (r.get("raw_content") if raw_content else None) or r.get("content") or ""
+        out.append({"title": r.get("title") or "", "link": r.get("url") or "",
+                    "snippet": trecho})
+    return out
+
+
 def _campo(r, nome):
     # SearchResult (pydantic) OU dict, indiferente - a sonda 2 mostrou que vem o objeto,
     # mas aceitar dict tambem e barato e blinda contra mudanca de versao do fork.
@@ -1553,9 +1632,24 @@ class Pipe:
         # Liga/desliga sem republish. DESLIGA e o modo seguro: sem web, 'geral' responde
         # com o proprio conhecimento do modelo, como antes da fatia 3.
         WEB_NA_ROTA_GERAL: bool = Field(default=True)
-        # Quantos resultados da web injetar. 3 e o que a sonda trouxe; mais que isso e
-        # ruido, dado que os snippets do DDGS gratis ja sao de qualidade variavel.
+        # Quantos resultados da web injetar. Pode subir - a sonda mostrou a rota geral
+        # recebendo 693 a 2726 chars (contra ~44k da institucional). Tunar pela sonda.
         WEB_MAX_RESULTADOS: int = Field(default=3)
+        # WEB DIRETO NO TAVILY (1.39.0). ON = o pipe chama o Tavily ele mesmo, para pedir
+        # os params de recencia que o wrapper do OWUI nao pede. OFF = fallback para
+        # search_web (engine do dropdown). Se a TAVILY_API_KEY faltar, cai no fallback
+        # sozinho - nunca fica sem web por config.
+        WEB_TAVILY_DIRETO: bool = Field(default=True)
+        # Params de RECENCIA - so aplicados quando o classificador marca '| recente'.
+        # DEFAULTS PROVISORIOS: a janela certa sai da SONDA (par Santos/dolar), nao daqui.
+        # 'days' e a janela; a sonda dira se 1 acerta o dolar e erra o Santos (-> maior).
+        WEB_RECENTE_DAYS: int = Field(default=7)
+        # topic='news' restringe a artigos de noticia: ajuda jogo/noticia, PODE atrapalhar
+        # cotacao (que nao e 'news'). Vazio = nao manda topic. A sonda decide.
+        WEB_RECENTE_TOPIC: str = Field(default="")
+        # include_raw_content: pagina inteira em vez do snippet. Mais contexto, mais
+        # tokens. A sonda mede se vale o peso; default OFF (snippet primeiro).
+        WEB_RECENTE_RAW: bool = Field(default=False)
 
     def __init__(self):
         self.valves = self.Valves()
@@ -1842,41 +1936,63 @@ class Pipe:
         msgs.insert(0, {"role": "system", "content": texto})
         return msgs
 
-    async def _contexto_web(self, request, user, texto):
+    async def _contexto_web(self, request, user, texto, recente=False):
         # Busca na WEB (rota geral) e devolve um bloco de contexto pronto para injetar,
         # ou "" se nada util voltou. So-leitura do ponto de vista do pipe: nao muda a base.
         #
-        # USA search_web, NAO process_web_search - de proposito. O process_web_search
-        # checa a permissao 'features.web_search' DENTRO da funcao (retrieval.py:2222) e
-        # ela fica OFF por desenho (defesa em duas camadas): daria 403 para todo coautor.
-        # O search_web (retrieval.py:1889) e a camada de baixo - sem gate de permissao,
-        # sem gate de ENABLE_WEB_SEARCH. Provado por sonda com usuario NAO-ADMIN (a conta
-        # da Amanda, role='user'): roda, e devolve list[SearchResult] com .snippet.
-        # Como usamos o snippet que ja vem, NAO ha carregamento de pagina (scraping) e o
-        # BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL e irrelevante - ele so afeta o
-        # process_web_search.
-        from open_webui.routers.retrieval import search_web
+        # DOIS CAMINHOS (1.39.0):
+        #  - TAVILY DIRETO (default, se WEB_TAVILY_DIRETO e a chave existem): o pipe chama
+        #    a API do Tavily ELE MESMO, para pedir os params de RECENCIA que o wrapper do
+        #    OWUI nao pede (topic/days/search_depth). So o pipe pode fazer isso: a decisao
+        #    de "esta pergunta e sobre o AGORA?" ('recente') vem do CLASSIFICADOR, e o
+        #    _contexto_web e o unico ponto que tem a pergunta E o veredito. O tavily.py do
+        #    OWUI recebe so (query, count) - nao sabe a intencao (medido: ver diario/sonda).
+        #  - FALLBACK search_web: se a valve esta off OU a chave falta, cai no caminho
+        #    antigo (search_web pela engine do dropdown). Nunca fica sem web por config.
+        #
+        # RECENCIA SO QUANDO 'recente' (economia, ponto do Davi): search_depth='advanced'
+        # custa 2 creditos (basico=1) no free tier de 1.000/mes. Pergunta atemporal ("quem
+        # foi Getulio Vargas") fica no BASICO; so a pergunta sobre o agora paga o advanced.
+        api_key = getattr(request.app.state.config, "TAVILY_API_KEY", "") or ""
+        usar_tavily = self.valves.WEB_TAVILY_DIRETO and api_key
 
-        engine = request.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
-        # FAIL-LOUD (1.38.0). O log ANTES da busca aparece mesmo se o search_web travar ou
-        # demorar - sem isto, uma engine que pendura some sem rastro. E o VAZIO (rate-limit
-        # do DDGS, a degradacao que o Davi previu) vira WARNING, nao INFO: degradacao tem
-        # que gritar. Motivo concreto: se a rota geral parar de achar resultado, a resposta
-        # continua parecendo boa (o modelo cai no proprio conhecimento) e ninguem ve o
-        # buraco - a mesma familia do "0 orfaos" da higiene.
-        log.info("chatnd: web buscando -> engine=%s | query=%r", engine, (texto or "")[:120])
-        resultados = await search_web(request, engine, texto, user)
+        log.info(
+            "chatnd: web buscando -> %s recente=%s | query=%r",
+            "tavily-direto" if usar_tavily else "search_web(fallback)",
+            recente, (texto or "")[:120],
+        )
+
+        if usar_tavily:
+            resultados = await _tavily_buscar(
+                api_key, texto,
+                max_results=self.valves.WEB_MAX_RESULTADOS,
+                # advanced/topic/days SO quando recente - o atemporal fica barato e amplo.
+                search_depth="advanced" if recente else "basic",
+                topic=(self.valves.WEB_RECENTE_TOPIC or None) if recente else None,
+                days=self.valves.WEB_RECENTE_DAYS if recente else None,
+                raw_content=self.valves.WEB_RECENTE_RAW if recente else False,
+            )
+            marca = "tavily"
+        else:
+            from open_webui.routers.retrieval import search_web
+            engine = request.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
+            resultados = await search_web(request, engine, texto, user)
+            marca = engine
+
         n = len(resultados or [])
         contexto = _montar_contexto_web(resultados, self.valves.WEB_MAX_RESULTADOS)
+        # FAIL-LOUD (1.38.0): VAZIO vira WARNING - degradacao (rate-limit, engine fora)
+        # tem que gritar, senao a rota geral responde sem web e ninguem ve o buraco
+        # (familia do "0 orfaos"). O log ANTES da busca (acima) aparece mesmo se travar.
         if n == 0:
             log.warning(
-                "chatnd: web VAZIO -> engine=%s trouxe 0 resultados (rate-limit? engine "
-                "fora do ar?). A rota geral respondeu SEM web.", engine
+                "chatnd: web VAZIO -> %s trouxe 0 resultados (rate-limit? chave? engine "
+                "fora do ar?). A rota geral respondeu SEM web.", marca
             )
         else:
             log.info(
-                "chatnd: web -> engine=%s resultados=%d contexto=%d chars",
-                engine, n, len(contexto),
+                "chatnd: web -> %s recente=%s resultados=%d contexto=%d chars",
+                marca, recente, n, len(contexto),
             )
         return contexto
 
@@ -2499,8 +2615,14 @@ class Pipe:
         # e NUNCA ve web; 'geral' tem web e NUNCA ve base. E o desenho da governanca -
         # "isto e sobre a Nidum?" decide qual das duas, e so uma toca cada fonte.
         if categoria == "geral" and self.valves.WEB_NA_ROTA_GERAL and texto:
+            # 'recente' vem do CLASSIFICADOR (marcador '| recente'), lido igual ao
+            # '| triade'. E juiz, nao regex - a licao do 'quando': a decisao "isto e sobre
+            # o agora?" e do modelo com contexto, nao de uma lista de palavras.
+            recente = "recente" in saida
             try:
-                contexto_web = await self._contexto_web(__request__, user, texto)
+                contexto_web = await self._contexto_web(
+                    __request__, user, texto, recente=recente
+                )
             except Exception:
                 # Web e um EXTRA - se falha (rate-limit do DDGS, rede), a conversa segue
                 # sem ela, com o proprio conhecimento do modelo. Nao derruba a resposta.
