@@ -25,15 +25,18 @@ description: SONDA DESCARTAVEL. Nao e produto. Mede se a engine configurada devo
 #      ela nao resolve o problema, so troca a fonte fraca.
 #   2. "qual a cotacao do dolar hoje?"        - muda todo dia; o DDGS trouxe 22/01.
 #
-# COMO USAR:
-#   1. Configure UMA engine candidata no painel (WEB_SEARCH_ENGINE + a chave dela).
-#   2. Publique esta sonda como Function (Pipe), NAO anexe a modelo nenhum.
-#   3. Logue como COAUTOR NAO-ADMIN (o caso real - search_web sem gate). Manda qualquer
+# COMO USAR (a producao NAO precisa mudar - a sonda testa em isolamento):
+#   1. No painel, configure so a CHAVE da candidata (ex.: TAVILY_API_KEY). NAO precisa
+#      trocar o WEB_SEARCH_ENGINE global - a producao segue no DDGS, nao validada ainda.
+#   2. Na valve ENGINE da sonda, ponha a engine a testar (default ja e 'tavily').
+#   3. Publique esta sonda como Function (Pipe), NAO anexe a modelo nenhum.
+#   4. Logue como COAUTOR NAO-ADMIN (o caso real - search_web sem gate). Manda qualquer
 #      coisa; a sonda ignora o texto e roda as duas perguntas fixas.
-#   4. Leia o resultado: para cada pergunta, os 3 primeiros resultados CRUS (titulo, link,
-#      snippet). VOCE julga se o conteudo e de ontem/hoje.
-#   5. Troque a engine no painel, rode de novo, compare.
-#   6. APAGAR a sonda quando escolher. (E as outras duas, se ainda vivas.)
+#   5. Leia o resultado: os 3 primeiros resultados CRUS (titulo, link, snippet). VOCE
+#      julga se o conteudo e de ontem/hoje.
+#   6. Para comparar outra engine: muda a valve ENGINE (+ a chave dela), roda de novo.
+#   7. SO DEPOIS de a sonda confirmar: troca o WEB_SEARCH_ENGINE global no painel. APAGAR
+#      a sonda (e as outras duas, se vivas).
 #
 # O QUE ELA NAO RESPONDE (nem tente concluir):
 #   - preco: e externo, voce pesquisa.
@@ -56,6 +59,19 @@ PERGUNTAS = [
 
 class Pipe:
     class Valves(BaseModel):
+        # A ENGINE A TESTAR - default 'tavily'. Ponto IMPORTANTE: a sonda usa ESTA valve,
+        # nao o WEB_SEARCH_ENGINE global. Assim voce testa o Tavily com a PRODUCAO INTACTA
+        # no DDGS - basta configurar a TAVILY_API_KEY no painel; nao precisa trocar a
+        # engine global (o que jogaria a producao para uma engine ainda nao validada). O
+        # search_web despacha pela engine passada + le a chave dela; funciona mesmo com o
+        # WEB_SEARCH_ENGINE ainda em 'duckduckgo'. Vazio = usa a global.
+        # NOTA CRITICA: o wrapper do OWUI chama o Tavily em modo BASICO - so
+        # {query, max_results}. NAO manda topic=news, days nem time_range, que sao a forca
+        # do Tavily para recencia. Esta sonda mede o Tavily-COMO-O-OWUI-CHAMA, que e o que
+        # a producao usaria. Se der velho, o problema nao e o Tavily - e o wrapper nao
+        # pedir recencia, e o conserto seria um passo a mais (patch no tavily.py ou chamar
+        # direto).
+        ENGINE: str = Field(default="tavily")
         # Quantos resultados mostrar por pergunta. 3 = o que a fatia 3 injeta.
         TOP: int = Field(default=3)
 
@@ -84,15 +100,20 @@ class Pipe:
             diz("[ATENCAO] rode como COAUTOR nao-admin (o caso real). Como admin, o "
                 "search_web ainda roda, mas nao e o caminho de producao.")
 
-        # --- engine configurada -----------------------------------------------
-        engine = None
-        try:
-            engine = __request__.app.state.config.WEB_SEARCH_ENGINE
-        except Exception as e:
-            diz("[FALHA] nao li WEB_SEARCH_ENGINE: %r" % e)
-            return "\n".join(linhas)
-        diz("ENGINE EM TESTE: %r  (configure outra no painel e rode de novo para comparar)"
-            % engine)
+        # --- engine a testar: a VALVE da sonda, nao o global (producao fica intacta) ----
+        engine = (self.valves.ENGINE or "").strip()
+        if not engine:
+            try:
+                engine = __request__.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
+                diz("[info] valve ENGINE vazia -> usando a global: %r" % engine)
+            except Exception as e:
+                diz("[FALHA] nao li WEB_SEARCH_ENGINE: %r" % e)
+                return "\n".join(linhas)
+        diz("ENGINE EM TESTE: %r  (valve da sonda; a producao segue no WEB_SEARCH_ENGINE "
+            "global, intacta). Precisa da chave dela configurada no painel." % engine)
+        if engine == "tavily":
+            diz("[nota] Tavily via OWUI = modo basico (so query+max_results). Se vier "
+                "velho, e o wrapper nao pedir recencia, nao o Tavily.")
 
         try:
             from open_webui.routers.retrieval import search_web
