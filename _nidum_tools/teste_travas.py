@@ -190,6 +190,11 @@ def main():
     # trouxe cidade errada para "populacao de Americana"). Sem o aviso, o modelo repetiria
     # um numero errado com a confianca de um certo.
     ok &= check("abre com aviso 'apoio, nao verdade'", "apoio, nao verdade" in ctx)
+    # A regra de RECENCIA (1.38.0), nascida do caso Santos: pergunta sobre o AGORA sem
+    # data confirmada -> nao afirmar o fato volatil especifico. Rede para quando a data
+    # nao aparece - onde "avise se estiver velho" falha.
+    ok &= check("instrui sobre pergunta SOBRE O AGORA (recencia)", "SOBRE O AGORA" in ctx)
+    ok &= check("manda NAO afirmar o dado especifico sem data", "NAO afirme o dado especifico" in ctx)
     ok &= check("aceita SearchResult (objeto)", "Americana - Wikipedia" in ctx)
     ok &= check("aceita dict tambem (blindagem de versao)", "Site de CEP" in ctx)
     ok &= check("cita o link, para o usuario conferir", "http://wiki/x" in ctx)

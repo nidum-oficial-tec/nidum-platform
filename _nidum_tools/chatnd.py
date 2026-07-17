@@ -1,9 +1,29 @@
 """
 title: ChatND
 author: Nidum
-version: 1.37.0
+version: 1.38.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.38.0:
+    - WEB (rota geral): reforca a instrucao de RECENCIA e torna o log FAIL-LOUD. Nao
+      troca a engine - isso e decisao de painel (ver sonda de recencia).
+    - A INSTRUCAO (A) foi reforcada por uma falha REAL (18/07): "quem ganhou o jogo do
+      Santos ontem?" -> o DDGS devolveu um jogo ANTIGO (Santos x Bahia; o de ontem foi
+      contra o Botafogo) e o modelo, mesmo RESSALVANDO, afirmou o adversario errado.
+      Licao: ressalva de honestidade NAO salva quando a fonte nao traz data e o modelo
+      apresenta o fato volatil especifico. O aviso antigo ("apoio, nao verdade; cite a
+      fonte") nao bastava. Novo: pergunta SOBRE O AGORA (placar de ontem, cotacao de hoje,
+      noticia) -> NAO afirmar o dado especifico (adversario/placar/numero) sem uma DATA que
+      confirme; senao, dizer que nao confirmou o atual e apontar a fonte.
+    - ISTO E REDE, NAO CONSERTO, e o changelog diz isso: a raiz e a engine. O DDGS nao
+      prioriza recencia; so 2 de 28 engines do fork (bocha, searxng) passam param de
+      recencia pelo wrapper do OWUI - os outros dependem do padrao da engine. A troca fica
+      para depois da sonda de recencia medir a engine CERTA.
+    - FAIL-LOUD no _contexto_web: loga ANTES da busca (aparece mesmo se a engine travar) e
+      o VAZIO vira WARNING (rate-limit tem que gritar). Motivo: se a rota geral parar de
+      achar resultado, a resposta continua parecendo boa e o buraco fica invisivel - a
+      familia do "0 orfaos". (E investigado: o log cego atual e o pipe publicado != main;
+      republicar a 1.38.0 traz o log de volta e o fail-loud blinda contra recaida.)
   1.37.0:
     - TRAVA TEMPORAL: 'quando' SAI do gatilho + detector de data unificado. Dois commits
       separados (bisect): (1) um detector so; (2) tira o 'quando'.
@@ -1307,7 +1327,21 @@ def _montar_contexto_web(resultados, maximo):
         "fraca ou dado desatualizado. Use como apoio, confronte com o que voce ja sabe, "
         "e CITE a fonte (o site) quando usar um dado especifico, para o usuario poder "
         "conferir. Se os resultados forem claramente irrelevantes, responda com seu "
-        "proprio conhecimento e diga que a busca nao ajudou.\n\n"
+        "proprio conhecimento e diga que a busca nao ajudou.\n"
+        # A regra abaixo nasceu de uma falha REAL (18/07): "quem ganhou o jogo do Santos
+        # ontem?" -> o buscador devolveu um jogo ANTIGO (Santos x Bahia) e o modelo, mesmo
+        # ressalvando "nao tenho o placar exato", AFIRMOU o adversario errado. Ressalva nao
+        # salvou: ele apresentou um fato volatil especifico que a fonte nao confirmava. E o
+        # buscador NEM SEMPRE traz a data do resultado - entao "avise se estiver velho"
+        # falha quando nao ha data para ver. A defesa e NAO afirmar o especifico. Isto e
+        # rede, nao conserto: a raiz e a engine (ver diario/sonda de recencia).
+        "PERGUNTA SOBRE O AGORA (placar de ontem, cotacao ou preco de hoje, noticia "
+        "recente, 'ultimo/atual/quem ganhou/quanto esta'): trate o resultado como NAO "
+        "CONFIAVEL para o fato exato, a menos que ele traga uma DATA confirmando ser do "
+        "periodo perguntado. Sem essa confirmacao, NAO afirme o dado especifico (o "
+        "adversario, o placar, o numero, o nome): diga que nao conseguiu confirmar o dado "
+        "atual e aponte a fonte para o usuario ver na origem. Errar um placar ou uma "
+        "cotacao com cara de certeza e pior que admitir que a busca nao trouxe o atual.\n\n"
     )
     return aviso + "\n\n".join(blocos)
 
@@ -1824,13 +1858,26 @@ class Pipe:
         from open_webui.routers.retrieval import search_web
 
         engine = request.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
+        # FAIL-LOUD (1.38.0). O log ANTES da busca aparece mesmo se o search_web travar ou
+        # demorar - sem isto, uma engine que pendura some sem rastro. E o VAZIO (rate-limit
+        # do DDGS, a degradacao que o Davi previu) vira WARNING, nao INFO: degradacao tem
+        # que gritar. Motivo concreto: se a rota geral parar de achar resultado, a resposta
+        # continua parecendo boa (o modelo cai no proprio conhecimento) e ninguem ve o
+        # buraco - a mesma familia do "0 orfaos" da higiene.
+        log.info("chatnd: web buscando -> engine=%s | query=%r", engine, (texto or "")[:120])
         resultados = await search_web(request, engine, texto, user)
-        contexto = _montar_contexto_web(resultados, self.valves.WEB_MAX_RESULTADOS)
         n = len(resultados or [])
-        log.info(
-            "chatnd: web -> engine=%s resultados=%d contexto=%d chars",
-            engine, n, len(contexto),
-        )
+        contexto = _montar_contexto_web(resultados, self.valves.WEB_MAX_RESULTADOS)
+        if n == 0:
+            log.warning(
+                "chatnd: web VAZIO -> engine=%s trouxe 0 resultados (rate-limit? engine "
+                "fora do ar?). A rota geral respondeu SEM web.", engine
+            )
+        else:
+            log.info(
+                "chatnd: web -> engine=%s resultados=%d contexto=%d chars",
+                engine, n, len(contexto),
+            )
         return contexto
 
     async def _stream_resiliente(self, body_iterator):
