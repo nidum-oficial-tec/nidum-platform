@@ -75,6 +75,38 @@ configuracao de infraestrutura (env vars, storage, banco):
 7. Atualize tambem `_nidum_docs/07_Diario_e_Status.md` a cada sessao relevante
    (acrescentando, nunca apagando o historico).
 
+## REGRA DO REBASE: padrao que funcionou tres vezes e o que voce para de checar
+
+**Ao resolver conflito de rebase: leia o RESULTADO, nao so o diff. E nunca aplique "como
+das outras vezes" sem conferir se vale desta vez.**
+
+POR QUE (quase publicado em 17/07/2026):
+
+Nos rebases das fatias A, B e C, o conflito era sempre no mesmo lugar - o `version:` e o
+changelog - e a resolucao era sempre a mesma: manter os dois blocos, mais novo no topo,
+e remover um cabecalho "  1.3X.0:" ORFAO que sobrava (ele ficava ANTES do marcador de
+conflito, entao entrava nas linhas de cima).
+
+Tres vezes seguidas o mesmo padrao. Na quarta, o cabecalho NAO era orfao - era o dono do
+bloco dos TERMOS CANONICOS (1.34.0), que tinha acabado de ser publicado e provado.
+Removi por reflexo. Resultado: o conteudo da 1.34.0 ficou sob o rotulo 1.35.0, e a 1.34.0
+SUMIU do changelog.
+
+    PY_COMPILE PASSAVA. OS TESTES PASSAVAM. O CHANGELOG MENTIA.
+
+    TESTE NAO PEGA DOCUMENTACAO.
+
+Nada na suite ia denunciar. O que pegou foi IMPRIMIR os cabecalhos e LER - um comando de
+tres segundos. Se tivesse mergeado, o changelog atribuiria o conserto da Q12 a versao
+errada, e a 1.34.0 - a unica que consertou de verdade - nao existiria no registro.
+
+O QUE FAZER:
+  - Depois de resolver, IMPRIMA o resultado e leia. Nao confie no "sem conflitos".
+  - Para changelog/doc, confira BLOCO A BLOCO por CONTEUDO: cada versao tem o texto que
+    e dela? (`grep` do marcador de cada bloco resolve.)
+  - Se voce se pegar pensando "e igual as outras vezes", esse e o momento de conferir -
+    nao de acelerar. O padrao que funcionou tres vezes e o que voce para de olhar.
+
 ## REGRA DO CLASSIFICADOR: teoria sobre prompt e HIPOTESE, nao diagnostico
 
 **Ao mexer no prompt do CLASSIFICADOR para consertar um roteamento errado: voce esta
