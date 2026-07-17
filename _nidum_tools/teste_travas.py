@@ -34,6 +34,9 @@ for _m in [
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import chatnd as C  # noqa: E402
 
+import datetime
+HOJE = datetime.date(2026, 7, 16)   # relogio FIXO nos casos que dependem de data
+
 
 def check(nome, cond):
     print(("  OK   " if cond else "  FALHOU  ") + nome)
@@ -73,18 +76,44 @@ def main():
     ok &= check("vazio -> False", C._menciona_nidum("") is False)
     ok &= check("None nao explode -> False", C._menciona_nidum(None) is False)
 
-    print("== TRAVA 1: _tem_marca_temporal (nao regrediu) ==")
+    print("== TRAVA 1: _tem_marca_temporal ==")
     # O bug real que originou a trava (Q14): "reuniao de 08/07" caiu em conversa e
     # nunca chegou a base.
     ok &= check("'o que a reuniao de 08/07 decidiu?' -> True",
                 C._tem_marca_temporal("o que a reuniao de 08/07 decidiu?") is True)
     ok &= check("'ata' -> True", C._tem_marca_temporal("me manda a ata") is True)
-    ok &= check("'quando' -> True", C._tem_marca_temporal("quando foi isso?") is True)
     ok &= check("'convergencia' -> True",
                 C._tem_marca_temporal("a convergencia de Comunidades Vivas") is True)
     ok &= check("data por extenso -> True",
                 C._tem_marca_temporal("o de 8 de junho de 2026") is True)
     ok &= check("'bom dia' -> False", C._tem_marca_temporal("bom dia") is False)
+
+    print("== TRAVA 1: 'quando' REMOVIDO (1.37.0) e o ano solto ==")
+    # 1) REPRODUZ O BUG (antes do conserto isto era True e mandava a Copa para a base):
+    ok &= check("FALSO POSITIVO CORRIGIDO: 'quando sera a final da copa de 2026?' -> False",
+                C._tem_marca_temporal("quando sera a final da copa do mundo de 2026?") is False)
+    ok &= check("'quando' sozinho ja nao dispara: 'quando foi isso?' -> False",
+                C._tem_marca_temporal("quando foi isso?") is False)
+    # 2) JOIO x TRIGO: as duas tem 'quando', resultados OPOSTOS - prova que o conserto
+    #    separou, nao so removeu. A institucional continua indo para a base por OUTRO sinal.
+    ok &= check("TRIGO: 'quando foi a convergencia?' -> True (via 'converg*', nao 'quando')",
+                C._tem_marca_temporal("quando foi a convergencia?") is True)
+    ok &= check("TRIGO: 'quando foi a reuniao?' -> True (via 'reuni*')",
+                C._tem_marca_temporal("quando foi a reuniao?") is True)
+    ok &= check("JOIO: 'quando comeca a copa?' -> False (nenhum sinal da Nidum)",
+                C._tem_marca_temporal("quando comeca a copa?") is False)
+    # 3) ANO SOLTO nao e data - a contradicao do log que motivou o commit 1. A trava e a
+    #    expansao agora CONCORDAM: as duas dizem "sem data".
+    ok &= check("ano solto: 'copa de 2026' -> False (ano nao identifica documento)",
+                C._tem_marca_temporal("copa de 2026", HOJE) is False)
+    ok &= check("ano solto: 'eleicao de 2024' -> False (ia para a web e continua indo)",
+                C._tem_marca_temporal("eleicao de 2024", HOJE) is False)
+    ok &= check("trava e expansao CONCORDAM sobre 'copa de 2026'",
+                C._tem_marca_temporal("copa de 2026", HOJE)
+                == bool(C._datas_no_texto("copa de 2026", HOJE)))
+    # 4) o commit 1 (detector unificado) trouxe formatos que so a busca pegava:
+    ok &= check("formato compacto agora dispara a trava: '13072026' -> True",
+                C._tem_marca_temporal("resume 13072026", HOJE) is True)
 
     print("== TRAVA 3: _menciona_termo_canonico (vocabulario proprio da Nidum) ==")
     V = C.Pipe().valves.TERMOS_CANONICOS

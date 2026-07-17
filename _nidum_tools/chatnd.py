@@ -1,9 +1,35 @@
 """
 title: ChatND
 author: Nidum
-version: 1.36.0
+version: 1.37.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.37.0:
+    - TRAVA TEMPORAL: 'quando' SAI do gatilho + detector de data unificado. Dois commits
+      separados (bisect): (1) um detector so; (2) tira o 'quando'.
+    - BUG: "quando sera a final da copa do mundo de 2026?" -> a trava temporal mandava
+      para 'documentos' (log: classificador='geral', a trava passou por cima), a busca nao
+      achava nada e o modelo respondia de memoria - a rota geral com web ficava cega.
+    - DIAGNOSTICO, com prova e com uma correcao DE AMBOS OS LADOS: Davi disse "ano solto
+      dispara"; o teste refutou (o regex nao casa ano de 4 digitos sozinho; "eleicao 2024",
+      "iPhone de 2025", "copa de 2026" JA vao para 'geral'). Eu tinha dito "quando" no
+      turno anterior e ele construiu a teoria do ano por cima sem verificar. O gatilho e
+      'quando' - palavra generica do portugues, nao sinal da Nidum.
+    - POR QUE 'quando' SAI e nao quebra nada legitimo: nas perguntas institucionais ele e
+      REDUNDANTE - quem identifica o acervo e a outra palavra ("quando foi a CONVERGENCIA"
+      -> converg*; "quando foi a REUNIAO" -> reuni*; "quando a NIDUM comecou" -> trava 2).
+      Sobra so o follow-up puro ("quando foi isso?" sem outro sinal): ali o classificador
+      COM CONTEXTO decide, e e onde ele deve.
+    - POR QUE "exigir dia+mes" (a 1a proposta) estava errado: nao consertaria a Copa (ela
+      nao tem data, disparou numa palavra) E quebraria a pergunta institucional SEM data
+      ("o que a reuniao decidiu?"), que foi a razao da Q14.
+    - COMMIT 1 tambem resolveu a CONTRADICAO do log: _tem_marca_temporal usava um regex de
+      data proprio (so dd/mm) e _expandir_datas usava _datas_no_texto (tudo). "Tem data"
+      significava coisas diferentes. Agora e o MESMO detector - ano solto e "sem data" para
+      as duas, e a trava ganhou os formatos que so a busca pegava (compacta, ISO,
+      abreviada).
+    - teste_travas: caso que REPRODUZ o bug (era True, agora False) + par JOIO/TRIGO com o
+      mesmo 'quando' e resultados opostos (prova que separou, nao so removeu).
   1.36.0:
     - FATIA 3 - WEB NA ROTA 'geral'. Fecha o desenho do chat unico: 'documentos' tem base
       e NUNCA ve web; 'geral' tem web e NUNCA ve base. O classificador decide qual, e so
@@ -1286,17 +1312,40 @@ def _montar_contexto_web(resultados, maximo):
     return aviso + "\n\n".join(blocos)
 
 
-_RE_MARCA_TEMPORAL = re.compile(
-    r"reuni\w*|\bata\b|converg\w*|\bquando\b|\d{1,2}/\d{1,2}"
-    r"|\bde\s+\d{1,2}\s+de\s+\w+\s+de\s+\d{4}\b",
+# PALAVRAS que sinalizam atividade REGISTRADA da Nidum (a esteira publica atas e
+# convergencias). As DATAS saem daqui: a deteccao de data agora e a MESMA do
+# _expandir_datas (via _datas_no_texto), para "tem data" significar UMA coisa so no
+# pipe. Antes eram dois criterios: o regex daqui casava so 'dd/mm' e o extenso; o
+# _expandir_datas casava tudo. O sintoma foi um log que se contradizia - "trava temporal
+# -> documentos" ao lado de "busca -> sem data na pergunta" na MESMA string (ano solto).
+# 'quando' SAIU daqui (1.37.0). Ele e palavra generica do portugues - um "quando/onde/
+# como", nao um sinal da Nidum -, e foi ele que disparou o falso positivo da Copa:
+# "quando sera a final da copa do mundo de 2026?" -> a trava mandava para 'documentos'
+# (log real: classificador='geral', a trava passou por cima). Nas perguntas LEGITIMAS o
+# 'quando' era REDUNDANTE - quem identifica o acervo e a OUTRA palavra:
+#   "quando foi a convergencia?" -> 'converg*' (aqui) e 'convergencia' (termo canonico)
+#   "quando foi a reuniao?"      -> 'reuni*' (aqui)
+#   "quando a Nidum comecou?"    -> 'Nidum' (trava 2)
+# Sobra so a brecha do follow-up puro ("quando foi isso?" sem outro sinal): ali o
+# classificador COM CONTEXTO (6 mensagens) decide - e e onde ele deve decidir. 'quando'
+# sozinho nao identifica documento nenhum, exatamente como ano solto nao identifica.
+_RE_MARCA_KEYWORD = re.compile(
+    r"reuni\w*|\bata\b|converg\w*",
     re.IGNORECASE,
 )
 
 
-def _tem_marca_temporal(texto):
-    # Marca temporal/reuniao: data, 'reuniao', 'ata', 'convergencia', 'quando', ou
-    # "de <dia> de <mes> de <ano>". Usado pelo guard deterministico do roteador.
-    return bool(_RE_MARCA_TEMPORAL.search(texto or ""))
+def _tem_marca_temporal(texto, hoje=None):
+    # Guard deterministico do roteador: pergunta que sinaliza acervo da Nidum e forcada
+    # para 'documentos'. Dispara por PALAVRA (reuniao/ata/convergencia/quando) OU por uma
+    # DATA de verdade - e "data de verdade" e o que o _datas_no_texto reconhece, o MESMO
+    # detector da busca. Ano solto (2026) NAO e data para nenhum dos dois: elas tem dia e
+    # mes. Assinatura com hoje= por simetria com _expandir_datas (year-inference de dd/mm);
+    # nao muda se um texto TEM data, so qual ano - a existencia e estavel.
+    t = texto or ""
+    if _RE_MARCA_KEYWORD.search(t):
+        return True
+    return bool(_datas_no_texto(t, hoje or datetime.date.today()))
 
 
 # Palavra INTEIRA, sem acento, caixa ignorada. \b nas duas pontas de proposito:
