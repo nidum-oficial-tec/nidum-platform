@@ -45,9 +45,33 @@ o banco ou o log ao lado; cada teoria minha foi testada, e as erradas ficaram re
 com o nome de erradas.** As três hipóteses que refutei valem tanto quanto os oito consertos
 — porque é o registro delas que impede a próxima pessoa (ou o próximo eu) de reabri-las.
 
-> **Pendente, e é só operação, não engenharia:** apagar as duas sondas
-> (`sonda_web_search`, `sonda_search_web`) e o wrapper *"Sonda - Teste"* da Amanda. A
-> reforma em si está fechada.
+> ~~**Pendente, e é só operação, não engenharia:** apagar as duas sondas
+> (`sonda_web_search`, `sonda_search_web`) e o wrapper *"Sonda - Teste"* da Amanda.~~
+> ✅ **FEITO (18-07-2026).** Functions ficou só com o **ChatND 1.36.0**; Models com os 4
+> (**Documentos, Geral, Identificador, Chico**). Nenhum órfão, nenhuma sonda viva. **A
+> reforma está fechada, publicada e limpa.**
+
+### 📋 Pendências abertas ao fechar o ciclo — todas anotadas, nenhuma urgente
+
+Registradas aqui juntas para não se perderem espalhadas. **Nenhuma bloqueia; cada uma tem
+o seu porquê de esperar.**
+
+| # | Pendência | Natureza | Onde está o detalhe |
+|---|---|---|---|
+| 1 | **Fork ~391 commits atrás** do Open WebUI | **segurança** — sem remote do upstream, não dá para trazer correção | plano de medição em `03_Arquitetura` (seção do upstream) |
+| 2 | **`uploads/` local de 159 MB** cresce sem freio | dívida de storage | `HIGIENE.md` §6 (esteira) — desenho pronto, decisão de governança |
+| 3 | **Origens invisíveis ao usuário** | auditabilidade — o bot cita no texto, mas não mostra a lista de fontes | anotada desde a rodada 1.26.0 |
+| 4 | **Rate-limit do DDGS** | operação — a observar em uso real | se `web -> resultados=0` recorrer no log, trocar `WEB_SEARCH_ENGINE` |
+| 5 | **Governança: v31, retenção de conversas, repo público** | decisão humana, não técnica | v31 fora do escopo até aprovação; retenção e público em `HIGIENE.md`/diário |
+| 6 | **Manual (V2) e Análise de APIs (V3)** vivem SOLTOS, fora do repo | mesma doença que curamos: doc canônica fora de controle de versão | avaliar migração para o repo — *"outro dia"*, por decisão do Davi |
+
+> **Sobre a #6, uma observação que a própria semana torna difícil ignorar:** dois
+> documentos que descrevem a produção, verificados contra ela hoje, vivem **fora de
+> qualquer repositório** — exatamente o modo de falha do `CLAUDE.md` no `.gitignore` e do
+> brandbook apontando para uma pasta movida. **Verificados hoje, apodrecem sozinhos
+> amanhã**, e ninguém saberá quando. Não é para resolver agora (decisão do Davi), mas fica
+> dito: enquanto estiverem soltos, a "seção do que não foi verificado" que eles trazem é a
+> única defesa — e ela também envelhece.
 
 ---
 
