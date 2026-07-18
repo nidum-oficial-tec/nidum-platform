@@ -12,10 +12,17 @@ description: SONDA DESCARTAVEL. Nao e produto. Roda o par Santos/dolar contra o 
 # _tavily_buscar da 1.39.0) e varia os PARAMS, porque a decisao agora nao e "qual
 # engine" - e "quais parametros de recencia". Tres perguntas em aberto, todas medidas
 # aqui, nenhuma chutada:
-#   1. days (a janela): 1 acerta o dolar mas erra o jogo de ontem? Testa 1, 3, 7.
-#   2. topic='news': ajuda o Santos (jogo E noticia) e ATRAPALHA o dolar (cotacao NAO e
-#      noticia)? Testa com e sem.
-#   3. raw_content (pagina inteira vs snippet): vale o peso de tokens? Mostra o tamanho.
+#   1. days (a janela) SO VALE COM topic='news' (doc oficial do Tavily; Davi confirmou).
+#      Logo a janela e testada SOB news: days=1 e days=2 com topic='news'. 'general+days'
+#      NAO EXISTE - o Tavily ignora days sem news, e a sonda MENTIRIA dizendo "days nao
+#      mudou nada" (o mesmo formato do fonte='': reportar um teste que nao aconteceu).
+#   2. topic: 'news' p/ o Santos (jogo E noticia); 'finance' p/ o dolar (cotacao NAO e
+#      noticia - news pode esvaziar). Cada topic no seu par natural; como todo combo roda
+#      nas DUAS perguntas, da para ver se news esvazia o dolar e se finance erra o Santos.
+#   3. advanced SOZINHO (sem days/topic): "o mais simples ja resolve?" CUIDADO - pode ser
+#      FALSO POSITIVO se o evento nao for de POUCAS HORAS (a profundidade acha o de ontem
+#      sem janela). So um evento fresco de verdade separa "advanced basta" de "precisa days".
+#   4. raw_content (pagina inteira vs snippet): vale o peso de tokens? Mostra o tamanho.
 #
 # O PAR DE PERGUNTAS (o Davi definiu o criterio):
 #   - "quem ganhou o jogo do Santos ontem?" = O VEREDITO. Verificavel (ontem foi contra o
@@ -58,21 +65,25 @@ PERGUNTAS = [
 # e resultado de busca varia. Aqui basico e advanced saem lado a lado, mesma rodada.
 #
 # ORDEM POR "O MAIS SIMPLES GANHA" - cada combo so se justifica se o anterior falhar:
-#  - Combo 1, ADVANCED SOZINHO (sem days, sem topic): busca mais profunda, mais fontes.
+#  - Combo 1, ADVANCED SOZINHO (general, sem days/topic): busca mais profunda, mais fontes.
 #    SE ELE JA ACERTA O PAR, o conserto e UMA linha (search_depth='advanced' no recente) e
-#    some a discussao inteira de janela/topico/'| recente:<topico>'. E o desfecho mais
-#    simples - por isso vem PRIMEIRO (ponto do Davi; eu tinha pulado direto para days).
-#  - So se advanced-so falhar e que 'days' entra (combos 2-3); so se days falhar e que
-#    'topic' entra (news p/ jogo, finance p/ cotacao). days=1 E days=2 juntos: a janela
-#    sai em UMA rodada.
+#    some a discussao inteira de janela/topico/'| recente:<topico>'. Desfecho mais simples,
+#    por isso vem PRIMEIRO. CUIDADO com FALSO POSITIVO: um evento de ONTEM a profundidade
+#    acha sem janela; so um de POUCAS HORAS separa "advanced basta" de "precisa da janela".
+#  - So se advanced-so falhar e que a JANELA entra - e ela SO existe sob topic='news' (o
+#    Tavily ignora days sem news). Por isso 2-3 sao news+days=1 e news+days=2 (a janela
+#    minima que ainda pega ONTEM, em UMA rodada), nunca 'general+days' (seria no-op mudo).
+#  - O dolar tem topic proprio: 'finance' (4, sem days - cotacao nao e news). O 5 =
+#    finance+days confirma EMPIRICAMENTE se days faz algo em finance ou e ignorado como no
+#    general. O 6 mede o peso do raw sob a config que traz o Santos (news+days).
 COMBOS = [
     ("0. LINHA DE BASE = producao hoje (basic, sem days, sem topic)", dict(search_depth="basic")),
-    ("1. SIMPLES: advanced SOZINHO (sem days, sem topic)", dict(search_depth="advanced")),
-    ("2. advanced + days=1 (general)", dict(search_depth="advanced", days=1)),
-    ("3. advanced + days=2 (general)", dict(search_depth="advanced", days=2)),
-    ("4. advanced + days=7 + topic=news (aposta do Santos)", dict(search_depth="advanced", days=7, topic="news")),
-    ("5. advanced + days=7 + topic=finance (aposta do dolar)", dict(search_depth="advanced", days=7, topic="finance")),
-    ("6. advanced + days=7 + raw_content (mede o peso em tokens)", dict(search_depth="advanced", days=7, raw_content=True)),
+    ("1. SIMPLES: advanced SOZINHO (general, sem days, sem topic)", dict(search_depth="advanced")),
+    ("2. JANELA MINIMA: advanced + topic=news + days=1 (Santos de ontem)", dict(search_depth="advanced", topic="news", days=1)),
+    ("3. JANELA +1: advanced + topic=news + days=2 (margem)", dict(search_depth="advanced", topic="news", days=2)),
+    ("4. DOLAR: advanced + topic=finance (sem days; cotacao NAO e news)", dict(search_depth="advanced", topic="finance")),
+    ("5. advanced + topic=finance + days=2 (days faz algo em finance ou e no-op?)", dict(search_depth="advanced", topic="finance", days=2)),
+    ("6. PESO: advanced + news + days=2 + raw_content (chars sob a config do Santos)", dict(search_depth="advanced", topic="news", days=2, raw_content=True)),
     # EXPLORATORIO - a doc menciona 'fast'; NAO confirmo que o /search aceita. Se invalido,
     # sai [VAZIO]/[FALHA] e essa e a resposta. Medir, nao chutar (licao dos 9 engines).
     ("7. exploratorio: search_depth=fast", dict(search_depth="fast")),
