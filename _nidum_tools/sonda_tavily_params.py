@@ -49,13 +49,21 @@ PERGUNTAS = [
     "qual a cotacao do dolar hoje?",          # CONTROLE
 ]
 
-# Cada combo e uma chamada -> creditos (basic=1, advanced=2; o Davi confere na Tavily).
+# Cada combo e uma chamada -> creditos (basic/fast=1, advanced=2; confirmado na doc).
+# A PERGUNTA DECISIVA vem primeiro: 'general + days' (sem topic) ja resolve OS DOIS? Se
+# sim, nao precisa de topic nem do classificador escolher topico - o mais simples ganha.
+# So se general falhar e que news/finance entram - e ai o par pode ser news para o Santos,
+# finance para o dolar (o Tavily tem 3 topicos: general/news/finance).
 COMBOS = [
-    ("basico (= producao hoje, controle)", dict(search_depth="basic")),
-    ("advanced + days=1", dict(search_depth="advanced", days=1)),
-    ("advanced + days=7", dict(search_depth="advanced", days=7)),
-    ("advanced + days=7 + news", dict(search_depth="advanced", days=7, topic="news")),
-    ("advanced + days=7 + raw_content", dict(search_depth="advanced", days=7, raw_content=True)),
+    ("basico (controle = producao hoje)", dict(search_depth="basic")),
+    ("DECISIVO: advanced + days=2 (general, SEM topic)", dict(search_depth="advanced", days=2)),
+    ("advanced + days=7 (general)", dict(search_depth="advanced", days=7)),
+    ("advanced + days=7 + topic=news (aposta do Santos)", dict(search_depth="advanced", days=7, topic="news")),
+    ("advanced + days=7 + topic=finance (aposta do dolar)", dict(search_depth="advanced", days=7, topic="finance")),
+    ("advanced + days=7 + raw_content (mede o peso)", dict(search_depth="advanced", days=7, raw_content=True)),
+    # EXPLORATORIO - a doc menciona fast; se a API nao aceitar, sai [VAZIO]/[FALHA] e a
+    # resposta e essa. Nao chuto que existe - meco.
+    ("exploratorio: search_depth=fast", dict(search_depth="fast")),
 ]
 
 

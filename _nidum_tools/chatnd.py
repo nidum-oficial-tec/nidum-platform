@@ -1963,21 +1963,27 @@ class Pipe:
         )
 
         if usar_tavily:
+            # advanced/topic/days SO quando recente - o atemporal fica barato e amplo.
+            depth = "advanced" if recente else "basic"
             resultados = await _tavily_buscar(
                 api_key, texto,
                 max_results=self.valves.WEB_MAX_RESULTADOS,
-                # advanced/topic/days SO quando recente - o atemporal fica barato e amplo.
-                search_depth="advanced" if recente else "basic",
+                search_depth=depth,
                 topic=(self.valves.WEB_RECENTE_TOPIC or None) if recente else None,
                 days=self.valves.WEB_RECENTE_DAYS if recente else None,
                 raw_content=self.valves.WEB_RECENTE_RAW if recente else False,
             )
             marca = "tavily"
+            # CREDITO CONTAVEL no log (ponto do Davi): basic=1cr, advanced=2cr no Tavily.
+            # Com ~30% recentes, chega perto do teto de 1.000/mes; se estourar e
+            # pay-as-you-go a ~$0,008/cr. Grepar 'cr~2' no log da o consumo do mes.
+            custo = "cr~2" if depth == "advanced" else "cr~1"
         else:
             from open_webui.routers.retrieval import search_web
             engine = request.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
             resultados = await search_web(request, engine, texto, user)
             marca = engine
+            custo = "cr~0"
 
         n = len(resultados or [])
         contexto = _montar_contexto_web(resultados, self.valves.WEB_MAX_RESULTADOS)
@@ -1986,13 +1992,14 @@ class Pipe:
         # (familia do "0 orfaos"). O log ANTES da busca (acima) aparece mesmo se travar.
         if n == 0:
             log.warning(
-                "chatnd: web VAZIO -> %s trouxe 0 resultados (rate-limit? chave? engine "
-                "fora do ar?). A rota geral respondeu SEM web.", marca
+                "chatnd: web VAZIO -> %s recente=%s %s trouxe 0 resultados (rate-limit? "
+                "chave? engine fora?). A rota geral respondeu SEM web.",
+                marca, recente, custo,
             )
         else:
             log.info(
-                "chatnd: web -> %s recente=%s resultados=%d contexto=%d chars",
-                marca, recente, n, len(contexto),
+                "chatnd: web -> %s recente=%s %s resultados=%d contexto=%d chars",
+                marca, recente, custo, n, len(contexto),
             )
         return contexto
 
