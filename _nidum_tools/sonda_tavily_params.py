@@ -57,21 +57,25 @@ PERGUNTAS = [
 # o parametro ou se o basico ja acertaria nesta rodada - o teste anterior foi UMA rodada,
 # e resultado de busca varia. Aqui basico e advanced saem lado a lado, mesma rodada.
 #
-# A PERGUNTA DECISIVA vem logo depois: 'general + days' (sem topic) ja resolve OS DOIS?
-# Se sim, nao precisa de topic nem do classificador escolher - o mais simples ganha. Only
-# se general falhar e que news/finance entram (news p/ jogo, finance p/ cotacao).
-# days=1 E days=2 juntos: se days=1 acerta o dolar e erra o Santos, e days=2 acerta os
-# dois, a janela sai em UMA rodada, nao duas (ponto do Davi).
+# ORDEM POR "O MAIS SIMPLES GANHA" - cada combo so se justifica se o anterior falhar:
+#  - Combo 1, ADVANCED SOZINHO (sem days, sem topic): busca mais profunda, mais fontes.
+#    SE ELE JA ACERTA O PAR, o conserto e UMA linha (search_depth='advanced' no recente) e
+#    some a discussao inteira de janela/topico/'| recente:<topico>'. E o desfecho mais
+#    simples - por isso vem PRIMEIRO (ponto do Davi; eu tinha pulado direto para days).
+#  - So se advanced-so falhar e que 'days' entra (combos 2-3); so se days falhar e que
+#    'topic' entra (news p/ jogo, finance p/ cotacao). days=1 E days=2 juntos: a janela
+#    sai em UMA rodada.
 COMBOS = [
     ("0. LINHA DE BASE = producao hoje (basic, sem days, sem topic)", dict(search_depth="basic")),
-    ("1. advanced + days=1 (general)", dict(search_depth="advanced", days=1)),
-    ("2. advanced + days=2 (general)", dict(search_depth="advanced", days=2)),
-    ("3. advanced + days=7 + topic=news (aposta do Santos)", dict(search_depth="advanced", days=7, topic="news")),
-    ("4. advanced + days=7 + topic=finance (aposta do dolar)", dict(search_depth="advanced", days=7, topic="finance")),
-    ("5. advanced + days=7 + raw_content (mede o peso em tokens)", dict(search_depth="advanced", days=7, raw_content=True)),
+    ("1. SIMPLES: advanced SOZINHO (sem days, sem topic)", dict(search_depth="advanced")),
+    ("2. advanced + days=1 (general)", dict(search_depth="advanced", days=1)),
+    ("3. advanced + days=2 (general)", dict(search_depth="advanced", days=2)),
+    ("4. advanced + days=7 + topic=news (aposta do Santos)", dict(search_depth="advanced", days=7, topic="news")),
+    ("5. advanced + days=7 + topic=finance (aposta do dolar)", dict(search_depth="advanced", days=7, topic="finance")),
+    ("6. advanced + days=7 + raw_content (mede o peso em tokens)", dict(search_depth="advanced", days=7, raw_content=True)),
     # EXPLORATORIO - a doc menciona 'fast'; NAO confirmo que o /search aceita. Se invalido,
     # sai [VAZIO]/[FALHA] e essa e a resposta. Medir, nao chutar (licao dos 9 engines).
-    ("6. exploratorio: search_depth=fast", dict(search_depth="fast")),
+    ("7. exploratorio: search_depth=fast", dict(search_depth="fast")),
 ]
 
 
