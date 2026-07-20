@@ -1,10 +1,23 @@
 """
 title: Gerador de Arquivos Nidum
 author: Nidum
-version: 2.2.0
+version: 2.3.0
 description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Devolve link de download nativo.
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
+  2.3.0:
+    - PALETA CORRIGIDA para o brandbook oficial (MKT_BrandbookNidum V1). Tres das seis
+      cores estavam quase certas mas erradas, algumas cravadas a mao no CSS ignorando as
+      constantes: musgo 647260 -> 515E52; pedra 8A8880 -> 9D9890; areia EAE6DC -> E5E0D5.
+      Trocado em TODO lugar (constantes E hexes soltos, incl. rgba decimais). As outras
+      tres ja estavam certas (terracota 9A4A2E, ceu 4F7187, escuro 1F1E1B).
+    - CONTRASTE (efeito colateral da paleta): pedra 9D9890 sobre areia E5E0D5 da 2.18:1
+      (reprova). Pedra e cor de SUPORTE no brandbook: rodape e antetitulo do deck, que a
+      usavam como TEXTO, passaram a escuro suavizado rgba(31,30,27,.62); pedra fica so em
+      filetes/bordas. E com o fundo virando areia, as superficies de alternancia do HTML
+      (blockquote/code/pre) ficariam areia-sobre-areia (sumindo) - passaram a BRANCO. A
+      zebra do XLSX/PDF NAO muda: assenta sobre branco (ROWBACKGROUNDS=[branco, cremealt]),
+      onde areia contrasta - por isso CREME_ALT continua E5E0D5.
   2.2.0:
     - GERACAO NAO-BLOQUEANTE: a montagem dos arquivos (pptx/xlsx/docx/pdf/html),
       que e trabalho sincrono pesado de CPU, agora roda em thread separada
@@ -42,13 +55,18 @@ log = logging.getLogger("gerador_nidum")
 # ----------------------------------------------------------------------------
 # Identidade visual da Nidum (brandbook MKT) - cores em hex, sem o '#'
 # ----------------------------------------------------------------------------
-NIDUM_TERRACOTA = "9A4A2E"   # cor de assinatura / destaque
-NIDUM_VERDE = "647260"       # verde oliva - titulos e blocos
-NIDUM_AZUL = "4F7187"        # azul aco - blocos
-NIDUM_CINZA = "8A8880"       # cinza quente / taupe - antetitulos
-NIDUM_PRETO = "1F1E1B"       # quase preto
-NIDUM_CREME = "EAE6DC"       # fundo principal dos slides de conteudo
-NIDUM_CREME_ALT = "E5E0D5"   # creme alternativo
+# Paleta oficial (MKT_BrandbookNidum V1). Nomes do brandbook entre parenteses.
+NIDUM_TERRACOTA = "9A4A2E"   # terracota - assinatura / destaque
+NIDUM_VERDE = "515E52"       # musgo - titulos e blocos
+NIDUM_AZUL = "4F7187"        # ceu - blocos
+NIDUM_CINZA = "9D9890"       # pedra - SUPORTE (filetes/bordas); NAO usar como texto
+                             #         sobre areia (2.18:1 reprova) - ver rodape/ante
+NIDUM_PRETO = "1F1E1B"       # escuro - cor de TEXTO (inclusive antetitulos)
+NIDUM_CREME = "E5E0D5"       # areia - fundo principal
+# CREME_ALT fica E5E0D5 de proposito: e a zebra de tabela do XLSX/PDF, que assenta sobre
+# BRANCO (ROWBACKGROUNDS=[branco, cremealt]); ali areia contrasta. So no HTML - onde o
+# fundo virou areia - a alternancia (blockquote/code/pre) passou a BRANCO. Nao unificar.
+NIDUM_CREME_ALT = "E5E0D5"   # areia (zebra sobre branco no xlsx/pdf)
 NIDUM_BRANCO = "FFFFFF"
 # Tipografia da marca
 NIDUM_FONT = "Maxima Nouva"  # titulos, subtitulos e corpo
@@ -131,23 +149,23 @@ def _brand_css():
         ]
     )
     rules = (
-        ":root{--terracota:#9A4A2E;--verde:#647260;--azul:#4F7187;"
-        "--cinza:#8A8880;--preto:#1F1E1B;--creme:#EAE6DC;--cremealt:#E5E0D5;}"
+        ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;"
+        "--cinza:#9D9890;--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;}"
         "*{box-sizing:border-box}"
-        "html{background:#EAE6DC}"
-        "body{background:#EAE6DC;color:#1F1E1B;"
+        "html{background:#E5E0D5}"
+        "body{background:#E5E0D5;color:#1F1E1B;"
         "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif;"
         "line-height:1.72;margin:0 auto;max-width:880px;padding:64px 44px 72px;"
         "font-size:18px;-webkit-font-smoothing:antialiased;}"
         "h1{font-family:'Ibrand','Maxima Nouva',sans-serif;font-size:2.7em;"
-        "color:#647260;font-weight:400;line-height:1.08;"
+        "color:#515E52;font-weight:400;line-height:1.08;"
         "letter-spacing:-.005em;margin:0 0 .5em;}"
         "h2{font-family:'Ibrand','Maxima Nouva',sans-serif;font-size:1.8em;"
-        "color:#647260;font-weight:400;line-height:1.18;"
+        "color:#515E52;font-weight:400;line-height:1.18;"
         "margin:1.9em 0 .5em;padding-bottom:.22em;"
         "border-bottom:2px solid rgba(154,74,46,.22);}"
         "h3{font-size:1.28em;color:#9A4A2E;font-weight:600;margin:1.5em 0 .4em;}"
-        "h4{font-size:1em;color:#647260;text-transform:uppercase;"
+        "h4{font-size:1em;color:#515E52;text-transform:uppercase;"
         "letter-spacing:.14em;margin:1.5em 0 .4em;}"
         "p{margin:0 0 1.1em;}"
         "a{color:#9A4A2E;text-decoration:none;"
@@ -155,24 +173,24 @@ def _brand_css():
         "strong,b{color:#9A4A2E;font-weight:700;}"
         "ul,ol{margin:0 0 1.1em 1.3em;} li{margin:.45em 0;}"
         "blockquote{margin:1.7em 0;padding:.7em 1.5em;border-left:4px solid #9A4A2E;"
-        "background:#E5E0D5;border-radius:0 12px 12px 0;color:#5b574f;font-style:italic;}"
-        "hr{border:none;border-top:2px solid rgba(138,136,128,.32);margin:2.4em 0;}"
+        "background:#FFFFFF;border-radius:0 12px 12px 0;color:#5b574f;font-style:italic;}"
+        "hr{border:none;border-top:2px solid rgba(157,152,144,.32);margin:2.4em 0;}"
         "img{max-width:100%;height:auto;border-radius:14px;"
         "box-shadow:0 12px 32px rgba(31,30,27,.15);}"
         "table{border-collapse:separate;border-spacing:0;width:100%;margin:1.7em 0;"
         "border-radius:12px;overflow:hidden;box-shadow:0 6px 20px rgba(31,30,27,.08);}"
-        "th{background:#647260;color:#EAE6DC;text-align:left;padding:12px 14px;"
+        "th{background:#515E52;color:#E5E0D5;text-align:left;padding:12px 14px;"
         "font-weight:600;}"
         "td{padding:11px 14px;border-bottom:1px solid #DEDAD0;}"
         "tr:nth-child(even) td{background:rgba(255,255,255,.45);}"
         "tr:last-child td{border-bottom:none;}"
-        "code{font-family:Consolas,Menlo,monospace;background:#E5E0D5;"
+        "code{font-family:Consolas,Menlo,monospace;background:#FFFFFF;"
         "border-radius:6px;padding:.12em .4em;font-size:.92em;}"
-        "pre{font-family:Consolas,Menlo,monospace;background:#E5E0D5;"
+        "pre{font-family:Consolas,Menlo,monospace;background:#FFFFFF;"
         "border-radius:10px;padding:1em 1.2em;overflow:auto;}"
         ".nidum-footer{margin-top:64px;padding-top:18px;"
-        "border-top:2px solid rgba(138,136,128,.3);display:flex;align-items:center;"
-        "gap:10px;color:#8A8880;font-size:.9em;letter-spacing:.02em;}"
+        "border-top:2px solid rgba(157,152,144,.3);display:flex;align-items:center;"
+        "gap:10px;color:rgba(31,30,27,.62);font-size:.9em;letter-spacing:.02em;}"
         ".nidum-footer img{height:20px;box-shadow:none;border-radius:0;margin:0;}"
         "@media(max-width:900px){body{padding:40px 22px 60px;font-size:17px;}}"
         "@media print{body{max-width:none;padding:0;background:#fff;}"
@@ -241,8 +259,8 @@ def _logo_b64(cor):
 
 DECK_CSS = (
     "*{box-sizing:border-box;margin:0;padding:0}"
-    ":root{--terracota:#9A4A2E;--verde:#647260;--azul:#4F7187;--cinza:#8A8880;"
-    "--preto:#1F1E1B;--creme:#EAE6DC;--cremealt:#E5E0D5;--rn:26px;"
+    ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;--cinza:#9D9890;"
+    "--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;--rn:26px;"
     "--sc:0 26px 70px rgba(31,30,27,.34)}"
     "html,body{height:100%;background:#15140f;"
     "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
@@ -252,11 +270,11 @@ DECK_CSS = (
     "border-radius:var(--rn);overflow:hidden;box-shadow:var(--sc);opacity:0;"
     "transform:translateY(16px) scale(.985);transition:opacity .5s ease,"
     "transform .55s cubic-bezier(.2,.7,.2,1);pointer-events:none;display:flex;"
-    "flex-direction:column;justify-content:center;padding:6% 7%;background:#EAE6DC;"
+    "flex-direction:column;justify-content:center;padding:6% 7%;background:#E5E0D5;"
     "color:#1F1E1B}"
     ".slide.active{opacity:1;transform:none;pointer-events:auto}"
     ".slide .ante{font-size:.92rem;letter-spacing:.2em;text-transform:uppercase;"
-    "color:var(--cinza);margin-bottom:1rem}"
+    "color:rgba(31,30,27,.62);margin-bottom:1rem}"
     ".slide h1{font-family:'Ibrand','Maxima Nouva',sans-serif;"
     "font-size:clamp(2.1rem,5.4vw,3.9rem);color:var(--verde);"
     "font-weight:400;line-height:1.05}"
@@ -273,7 +291,7 @@ DECK_CSS = (
     ".slide.cover .sub{color:var(--terracota);font-size:clamp(1.1rem,2vw,1.5rem);"
     "margin-top:.7rem}"
     ".slide.fill{justify-content:center;color:var(--creme)}"
-    ".slide.fill .ante{color:rgba(234,230,220,.72)}"
+    ".slide.fill .ante{color:rgba(229,224,213,.72)}"
     ".slide.fill h1,.slide.fill h2{color:var(--creme)} .slide.fill p{color:var(--creme)}"
     ".slide.split{flex-direction:row;padding:0}"
     ".split .left{flex:0 0 42%;display:flex;align-items:center;padding:6.5%}"
@@ -288,20 +306,20 @@ DECK_CSS = (
     ".cards{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;margin-top:1.3rem}"
     ".card{border-radius:18px;padding:1.3rem 1.45rem;color:var(--creme)}"
     ".card h3{font-size:1.22rem;margin-bottom:.35rem} "
-    ".card p{color:rgba(234,230,220,.92);margin-top:.1rem;font-size:1.02rem;max-width:none}"
+    ".card p{color:rgba(229,224,213,.92);margin-top:.1rem;font-size:1.02rem;max-width:none}"
     ".nav{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;"
     "align-items:center;gap:14px;background:rgba(31,30,27,.55);"
     "-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);padding:8px 16px;"
     "border-radius:999px;z-index:10}"
-    ".nav button{border:none;background:transparent;color:#EAE6DC;font-size:1.3rem;"
+    ".nav button{border:none;background:transparent;color:#E5E0D5;font-size:1.3rem;"
     "cursor:pointer;width:34px;height:34px;border-radius:50%;line-height:1;"
     "transition:background .15s}"
-    ".nav button:hover{background:rgba(234,230,220,.18)}"
+    ".nav button:hover{background:rgba(229,224,213,.18)}"
     ".dots{display:flex;gap:7px}"
-    ".dot{width:8px;height:8px;border-radius:50%;background:rgba(234,230,220,.42);"
+    ".dot{width:8px;height:8px;border-radius:50%;background:rgba(229,224,213,.42);"
     "cursor:pointer;transition:background .2s,width .2s}"
-    ".dot.on{background:#EAE6DC;width:22px;border-radius:999px}"
-    ".count{color:#EAE6DC;font-size:.84rem;min-width:52px;text-align:center;"
+    ".dot.on{background:#E5E0D5;width:22px;border-radius:999px}"
+    ".count{color:#E5E0D5;font-size:.84rem;min-width:52px;text-align:center;"
     "letter-spacing:.04em}"
     "@media print{.nav{display:none}.slide{position:relative;opacity:1!important;"
     "transform:none!important;margin:0 auto 24px;page-break-after:always}}"
@@ -353,7 +371,7 @@ def _slide_html(s, tipo, mapa, cores_secao, cores_cartao, sec, logo_t, logo_a):
         return ("<section class='slide fill' style='background:" + c + "'>"
                 + ante + h1 + par + logo_color + "</section>")
     if tipo == "divisao":
-        c = mapa.get(str(s.get("cor", "verde")).lower(), "#647260")
+        c = mapa.get(str(s.get("cor", "verde")).lower(), "#515E52")
         right = ante + par + bl()
         return ("<section class='slide split'><div class='left' style='background:"
                 + c + "'>" + h2 + "</div><div class='right'>" + right + "</div></section>")
@@ -761,11 +779,11 @@ class Tools:
             logo_t = _logo_b64("terracota")
             logo_a = _logo_b64("areia")
             mapa = {
-                "verde": "#647260", "azul": "#4F7187", "terracota": "#9A4A2E",
-                "preto": "#1F1E1B", "creme": "#EAE6DC",
+                "verde": "#515E52", "azul": "#4F7187", "terracota": "#9A4A2E",
+                "preto": "#1F1E1B", "creme": "#E5E0D5",
             }
-            cores_secao = ["#647260", "#4F7187", "#9A4A2E"]
-            cores_cartao = ["#4F7187", "#647260", "#9A4A2E", "#1F1E1B"]
+            cores_secao = ["#515E52", "#4F7187", "#9A4A2E"]
+            cores_cartao = ["#4F7187", "#515E52", "#9A4A2E", "#1F1E1B"]
             sec = [0]
 
             partes = []
