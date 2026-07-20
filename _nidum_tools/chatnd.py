@@ -1,9 +1,27 @@
 """
 title: ChatND
 author: Nidum
-version: 1.39.0
+version: 1.40.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.40.0:
+    - ROTEAMENTO: pedido de ARQUIVO caia em 'documentos'. Sintoma real: "transforme isso
+      num html com a identidade da Nidum" -> rota 'documentos' -> o modelo despejou ~900
+      linhas de HTML no chat (a rota responde no chat, nao chama a tool); no pedido seguinte
+      ele alucinou "nao tenho ferramenta ativa". CAUSA: o prompt do classificador nao tinha
+      (1) os formatos HTML/pagina/site e (2) a familia de verbos de TRANSFORMACAO
+      (transforme/converta/passe/vira). Verbo + formato desconhecidos + tema Nidum -> a
+      regra "na duvida, base" empurrava para 'documentos'.
+    - FIX A (prompt): categoria 'arquivo' agora inclui HTML/pagina/site e os verbos de
+      transformacao; diz que 'arquivo' VENCE 'documentos'/'geral' mesmo com o conteudo ja
+      na conversa e tema Nidum; e que nesta rota o conteudo NUNCA e escrito no chat (so o
+      LINK).
+    - FIX B (trava deterministica): _pede_arquivo - a 4a trava do roteador e a UNICA que
+      resgata PARA 'arquivo', sobrescrevendo 'documentos'/'geral' (nunca 'imagem'). Exige
+      DOIS sinais na frase (verbo de producao + substantivo de arquivo entregavel) e exclui
+      'documento(s)'/'imagem'/'logo' para nao sequestrar as rotas 'documentos'/'imagem'.
+      Roda mesmo se o classificador falha. Casos em teste_travas.py (20 casos: 10 True/10
+      False).
   1.39.0:
     - WEB RECENCIA (saida 2): o pipe chama o TAVILY DIRETO, para pedir os params que o
       wrapper do OWUI nao pede. O tavily.py do OWUI manda so {query, max_results} - e e
@@ -632,12 +650,19 @@ CLASSIFICADOR = (
     "ilustracao, logo, icone, foto, arte ou wallpaper (texto-para-imagem). Ex.: "
     "'gere uma imagem de um ninho', 'crie um logo', 'desenhe um gato'. NAO confundir "
     "com perguntas sobre uma imagem JA enviada/anexada.\n"
-    "arquivo: pedidos para GERAR, CRIAR, MONTAR, FAZER, PREPARAR ou BAIXAR um "
-    "arquivo ou documento entregavel - apresentacao, slides, deck, PPT, PowerPoint, "
-    "Excel, planilha, Word, DOCX, relatorio ou PDF (NAO inclui imagens/figuras). "
-    "Ex.: 'faca uma apresentacao sobre X', 'monte um relatorio', 'gere um PDF', "
-    "'crie um deck'. Vale MESMO que o tema seja a Nidum: se o usuario pede para "
-    "PRODUZIR um arquivo/apresentacao/relatorio, e 'arquivo', nunca 'documentos'.\n"
+    "arquivo: pedidos para GERAR, CRIAR, MONTAR, FAZER, PREPARAR, BAIXAR ou "
+    "TRANSFORMAR/CONVERTER algo num arquivo ou documento entregavel - apresentacao, "
+    "slides, deck, PPT, PowerPoint, Excel, planilha, Word, DOCX, relatorio, PDF, "
+    "HTML, pagina web ou site (NAO inclui imagens/figuras). Verbos: alem de gerar/"
+    "criar/montar/fazer/preparar/baixar, tambem TRANSFORME, CONVERTA, PASSE PARA, "
+    "VIRA (ex.: 'transforme ISSO num HTML com a identidade da Nidum', 'converta em "
+    "PDF', 'passe para HTML', 'vira um deck sobre isso', 'monte um relatorio', 'gere "
+    "um PDF', 'crie um deck'). "
+    "'arquivo' VENCE 'documentos' e 'geral' SEMPRE que o pedido for para PRODUZIR o "
+    "entregavel - INCLUSIVE quando (a) o conteudo a virar arquivo JA ESTA na conversa "
+    "('transforme isso num...') e (b) o tema e a Nidum. Nao existe pedido de PRODUZIR "
+    "arquivo que seja 'documentos'. NESTA rota o codigo/conteudo NUNCA e escrito no "
+    "chat - o usuario recebe so o LINK de download.\n"
     "documentos: qualquer pergunta ou follow-up que pede uma RESPOSTA no chat "
     "sobre a Nidum como organizacao - governanca, sociedade, participacao, "
     "remuneracao e distribuicao, projetos e ecossistemas, pessoas e papeis, "
@@ -1545,6 +1570,46 @@ def _bloco_termos_no_prompt(valve_txt):
         "Ex.: 'o que significa fazer da casa um ninho?' e 'documentos', nao 'geral' - "
         "e uma frase LITERAL do Documento Fundador."
     )
+
+
+# TRAVA DE ARQUIVO (simetrica as de cima, mas para o OUTRO lado): forca 'arquivo' quando
+# o classificador manda um PEDIDO DE PRODUZIR ARQUIVO para 'documentos'/'geral'. Bug real:
+# "transforme isso num html com a identidade da Nidum" caiu em 'documentos' (verbo de
+# transformacao + formato HTML nao estavam no prompt, e o tema era Nidum); a rota de
+# documentos responde no chat, entao despejou ~900 linhas de HTML em vez de chamar a tool.
+# As outras tres travas so resgatam PARA 'documentos'; esta e a UNICA que resgata DE
+# 'documentos', porque o defeito e documentos engolindo arquivo.
+#
+# EXIGE DOIS SINAIS na mesma frase, perto um do outro: um VERBO de producao E um
+# SUBSTANTIVO de arquivo entregavel - senao vira palpite. NAO entram 'documento(s)'
+# (palavra do acervo institucional) nem 'imagem/logo/figura/foto': a rota 'imagem' segue
+# decidida pelo classificador (por isso a trava sobrescreve so 'documentos'/'geral', NUNCA
+# 'imagem'). O regex e todo ASCII e roda no texto normalizado (sem acento).
+_VERBO_PRODUZIR = (
+    r"(?:gera|gere|gerar|gerando|cria|crie|criar|criando|monta|monte|montar|"
+    r"faca|facam|fazer|fazendo|prepara|prepare|preparar|produz|produza|produzir|"
+    r"transforma|transforme|transformar|converta|converte|converter|"
+    r"exporta|exporte|exportar|salva|salve|salvar|baixa|baixe|baixar|"
+    r"passa|passe|passar|vira|virar)"
+)
+_SUBST_ARQUIVO = (
+    r"(?:arquivo|html|pdf|pptx|ppt|powerpoint|apresentacao|apresentacoes|slides|"
+    r"deck|docx|word|xlsx|excel|planilha|planilhas|relatorio|relatorios|pagina|"
+    r"site)"
+)
+_RE_PEDE_ARQUIVO = re.compile(
+    r"\b" + _VERBO_PRODUZIR + r"\b[\s\S]{0,60}?\b" + _SUBST_ARQUIVO + r"\b"
+    r"|\b" + _SUBST_ARQUIVO + r"\b[\s\S]{0,40}?"
+    r"\b(?:para\s+baixar|para\s+download|pronto\s+para\s+baixar|em\s+anexo)\b",
+    re.IGNORECASE,
+)
+
+
+def _pede_arquivo(texto):
+    # PURA. True se o texto pede para PRODUZIR um arquivo entregavel: verbo de producao +
+    # substantivo de arquivo perto, OU substantivo de arquivo + "para baixar/download/em
+    # anexo". Roda no texto normalizado (sem acento); o regex e todo sem acento.
+    return bool(_RE_PEDE_ARQUIVO.search(_normalizar_ascii(texto or "")))
 
 
 class Pipe:
@@ -2523,6 +2588,16 @@ class Pipe:
         ):
             categoria = "documentos"
             log.info("chatnd: trava 'termo canonico' -> geral vira documentos")
+
+        # TRAVA 4 (1.40.0) - PEDIDO DE ARQUIVO. Simetrica as tres de cima, mas resgata
+        # PARA 'arquivo' (nao para 'documentos'). Bug real: "transforme isso num html com a
+        # identidade da Nidum" caiu em 'documentos' e a rota despejou o HTML no chat em vez
+        # de chamar a tool. E a UNICA trava que sobrescreve 'documentos' (as outras so o
+        # alimentam) - porque o defeito e documentos engolindo arquivo. NUNCA toca 'imagem':
+        # essa rota segue com o classificador (por isso o gate e so documentos/geral).
+        if categoria in ("documentos", "geral") and _pede_arquivo(texto):
+            log.info("chatnd: trava 'pede arquivo' -> %s vira arquivo", categoria)
+            categoria = "arquivo"
 
         log.info(
             "chatnd: roteador -> %s (classificador=%r)", categoria, saida or "(atalho)"
