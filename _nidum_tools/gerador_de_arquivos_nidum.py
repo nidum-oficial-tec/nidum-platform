@@ -13,6 +13,12 @@ changelog:
       oficial DEDAD0 -> pedra 9D9890 (aqui pedra e uso CERTO: filete) no HTML/XLSX/PDF.
       Tons fora da paleta -> escuro: texto de citacao do HTML (5b574f) e palco do deck
       (15140f, decisao do dono: escuro oficial, nao um tom mais escuro que a paleta).
+    - Fatia B (varredura de azul): procurado qualquer azul cravado a mao fora do ceu oficial
+      4F7187 em todos os formatos - NENHUM encontrado. Os 7 azuis do arquivo sao todos
+      4F7187. Sem mudanca de codigo; a varredura e o resultado.
+    - Fatia C (assinatura do rodape): separador unificado em PONTO. HTML usava "&middot;",
+      DOCX/PDF usavam " - "; agora os tres sao "nidum. fazer da casa um ninho." Wordmark
+      'nidum' minusculo mantido no rodape; a frase e literal do Documento Fundador.
   2.3.0:
     - EDITOR HTML embutido: barra fixa "Editar"/"Salvar HTML" no HTML e no deck gerados.
       Editar liga contenteditable no corpo (a barra fica de fora); Salvar serializa a pagina
@@ -309,7 +315,7 @@ def _injetar_marca_html(conteudo):
     footer = (
         "<footer class='nidum-footer'>"
         + (("<img src='" + logo + "'>") if logo else "")
-        + "<span>nidum &middot; fazer da casa um ninho.</span></footer>"
+        + "<span>nidum. fazer da casa um ninho.</span></footer>"
     )
     bidx = conteudo.lower().rfind("</body>")
     if bidx != -1:
@@ -1521,7 +1527,7 @@ class Tools:
             if marca:
                 try:
                     fp = doc.sections[0].footer.paragraphs[0]
-                    fr = fp.add_run("nidum  -  fazer da casa um ninho.")
+                    fr = fp.add_run("nidum. fazer da casa um ninho.")
                     fr.font.name = NIDUM_FONT
                     fr.font.size = Pt(8)
                     fr.font.color.rgb = ink
@@ -1642,7 +1648,7 @@ class Tools:
                 canvas.setFillColor(preto)
                 canvas.setFont(FONT, 8)
                 canvas.drawString(
-                    22 * mm, 11 * mm, "nidum  -  fazer da casa um ninho."
+                    22 * mm, 11 * mm, "nidum. fazer da casa um ninho."
                 )
                 canvas.drawRightString(
                     doc.pagesize[0] - 22 * mm, 11 * mm, str(doc.page)
