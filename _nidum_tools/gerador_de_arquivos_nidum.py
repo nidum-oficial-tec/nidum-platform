@@ -19,6 +19,14 @@ changelog:
     - Fatia C (assinatura do rodape): separador unificado em PONTO. HTML usava "&middot;",
       DOCX/PDF usavam " - "; agora os tres sao "nidum. fazer da casa um ninho." Wordmark
       'nidum' minusculo mantido no rodape; a frase e literal do Documento Fundador.
+    - Fatia D (logo na abertura E no encerramento). Regra de marca: logo no topo e no fim,
+      UMA vez cada (nao em toda pagina). Estado por formato: PPTX ja tinha (capa +
+      encerramento); deck ja tinha (cover + logo do ultimo slide); PDF ja tinha no topo, so
+      FALTAVA o fim (adicionado, centralizado). DOCX NAO tinha nenhum - adicionados topo e
+      fim (centralizados, terracota sobre branco). HTML so tinha o rodape (fim) - adicionado
+      o header (topo); e o rodape deixou de sumir no @media print, para a logo de fim
+      sobreviver a impressao. XLSX nao recebe (grade, sem capa/fim). Logo terracota em fundo
+      areia/branco (a logica de cor por fundo ja existente foi mantida).
   2.3.0:
     - EDITOR HTML embutido: barra fixa "Editar"/"Salvar HTML" no HTML e no deck gerados.
       Editar liga contenteditable no corpo (a barra fica de fora); Salvar serializa a pagina
@@ -280,13 +288,14 @@ def _brand_css():
         "border-radius:6px;padding:.12em .4em;font-size:.92em;}"
         "pre{font-family:Consolas,Menlo,monospace;background:#FFFFFF;"
         "border-radius:10px;padding:1em 1.2em;overflow:auto;}"
+        ".nidum-header{margin:0 0 40px;}"
+        ".nidum-header img{height:30px;box-shadow:none;border-radius:0;margin:0;}"
         ".nidum-footer{margin-top:64px;padding-top:18px;"
         "border-top:2px solid rgba(157,152,144,.3);display:flex;align-items:center;"
         "gap:10px;color:rgba(31,30,27,.62);font-size:.9em;letter-spacing:.02em;}"
         ".nidum-footer img{height:20px;box-shadow:none;border-radius:0;margin:0;}"
         "@media(max-width:900px){body{padding:40px 22px 60px;font-size:17px;}}"
-        "@media print{body{max-width:none;padding:0;background:#fff;}"
-        ".nidum-footer{display:none;}}"
+        "@media print{body{max-width:none;padding:0;background:#fff;}}"
     )
     return "<style>/*NIDUM_BRAND*/\n" + faces + rules + "</style>"
 
@@ -312,6 +321,16 @@ def _injetar_marca_html(conteudo):
         else:
             conteudo = css + conteudo
     logo = _logo_b64("terracota")
+    # Logo de ABERTURA (topo) - regra 2.4.0. Pagina areia -> logo terracota. Inserido logo
+    # apos <body>; o rodape (abaixo) traz a logo de ENCERRAMENTO. Idempotente pelo marcador
+    # NIDUM_BRAND (checado no topo desta funcao).
+    if logo:
+        header = "<header class='nidum-header'><img src='" + logo + "'></header>"
+        lb = conteudo.lower().find("<body")
+        if lb != -1:
+            gt = conteudo.find(">", lb)
+            if gt != -1:
+                conteudo = conteudo[:gt + 1] + header + conteudo[gt + 1:]
     footer = (
         "<footer class='nidum-footer'>"
         + (("<img src='" + logo + "'>") if logo else "")
@@ -1466,7 +1485,7 @@ class Tools:
 
         def _montar():
             from docx import Document
-            from docx.shared import Pt, RGBColor
+            from docx.shared import Pt, RGBColor, Inches
             from docx.enum.text import WD_ALIGN_PARAGRAPH
 
             verde = RGBColor(*_hex_to_rgb(NIDUM_VERDE))
@@ -1475,6 +1494,20 @@ class Tools:
             ink = RGBColor(*_hex_to_rgb(NIDUM_PRETO))
 
             doc = Document()
+
+            # Logo de marca (regra 2.4.0: abertura E encerramento). Pagina branca ->
+            # logo terracota. Centralizado, nunca em toda pagina - so topo e fim.
+            def _logo_par(cor):
+                lp = _logo_path(cor)
+                if not lp:
+                    return
+                try:
+                    par = doc.add_paragraph()
+                    par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    par.add_run().add_picture(lp, width=Inches(1.6))
+                except Exception:
+                    log.exception("gerador_nidum: falha ao inserir logo docx")
+
             if marca:
                 try:
                     normal = doc.styles["Normal"]
@@ -1498,6 +1531,9 @@ class Tools:
                             pass
                 except Exception:
                     log.exception("gerador_nidum: falha ao aplicar estilos docx")
+
+            if marca:
+                _logo_par("terracota")   # logo de ABERTURA (topo)
 
             h = doc.add_heading(titulo or "Documento", level=0)
             for run in h.runs:
@@ -1523,6 +1559,9 @@ class Tools:
                     for run in pb.runs:
                         run.font.name = NIDUM_FONT
                         run.font.color.rgb = ink
+
+            if marca:
+                _logo_par("terracota")   # logo de ENCERRAMENTO (fim)
 
             if marca:
                 try:
@@ -1717,6 +1756,19 @@ class Tools:
                     t.setStyle(TableStyle(estilo_t))
                     flow.append(t)
                     flow.append(Spacer(1, 4 * mm))
+
+            # Logo de ENCERRAMENTO (regra 2.4.0: abertura E fim). O topo ja tem logo (acima);
+            # aqui fecha o documento. Centralizado, menor, terracota (pagina areia).
+            if marca:
+                lp_fim = _logo_path("terracota")
+                if lp_fim:
+                    try:
+                        flow.append(Spacer(1, 8 * mm))
+                        flow.append(
+                            Image(lp_fim, width=32 * mm, height=18 * mm, hAlign="CENTER")
+                        )
+                    except Exception:
+                        log.exception("gerador_nidum: falha ao inserir logo de fim no pdf")
 
             docp.build(flow, onFirstPage=_fundo, onLaterPages=_fundo)
             return buf.getvalue()
