@@ -6,6 +6,17 @@ description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no s
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
   2.3.0:
+    - EDITOR HTML embutido: barra fixa "Editar"/"Salvar HTML" no HTML e no deck gerados.
+      Editar liga contenteditable no corpo (a barra fica de fora); Salvar serializa a pagina
+      INTEIRA com as edicoes (document.documentElement.outerHTML, com <!DOCTYPE html>) e
+      baixa via Blob - offline, sem servidor, e o arquivo baixado continua editavel. Ctrl/
+      Cmd+S salva (previne o "salvar pagina" do navegador); some em @media print; injecao
+      IDEMPOTENTE (marcador NIDUM_EDITOR - reabrir o arquivo salvo nao duplica a barra). No
+      deck, o keydown das setas/espaco ignora quando a edicao esta ligada (window.__ndEdit),
+      senao digitar trocava de slide. Valve EDITOR_HTML (default True) desliga. O nome
+      sugerido no download e o _nome_padrao (calculado antes da montagem).
+    - BUG gerar_html: o titulo era interpolado no <title> SEM escapar - '<' ou '&' quebravam
+      a tag. Agora passa por _esc (o deck ja escapava).
     - NOMENCLATURA OFICIAL (Tec_Office_e_Governanca_de_Dados_v2, slide 7): arquivos agora
       saem como ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext (ex.: MKT_Campanha_01-06-2026_v1.pptx),
       no lugar de titulo.replace(" ","_")+.ext (sem ecossistema, sem data, sem versao, com
@@ -309,6 +320,88 @@ def _esc(t):
     )
 
 
+# ----------------------------------------------------------------------------
+# EDITOR HTML embutido (v2.3.0): barra fixa "Editar" / "Salvar HTML" injetada no HTML e no
+# deck gerados. Editar liga contenteditable no corpo (a barra fica DE FORA, senao o usuario
+# editaria os botoes); Salvar serializa a PAGINA INTEIRA (com as edicoes) e baixa via Blob
+# - offline, sem servidor, duplo clique - e o arquivo baixado CONTINUA editavel (a barra vai
+# junto). Idempotente pelo marcador NIDUM_EDITOR: o arquivo salvo ja tem a barra e nao
+# duplica se for reinjetado. Some em @media print. Rotulos ASCII (Editar/Salvar HTML).
+# ----------------------------------------------------------------------------
+_EDITOR_MARCADOR = "NIDUM_EDITOR"
+
+
+def _esc_js(t):
+    # Escapa uma string para caber dentro de um literal JS entre aspas duplas. O "</"
+    # vira "<\/" para um nome com '</script>' nao fechar a tag no meio do bloco.
+    return (str(t if t is not None else "")
+            .replace("\\", "\\\\").replace('"', '\\"')
+            .replace("\n", " ").replace("\r", " ").replace("</", "<\\/"))
+
+
+def _bloco_editor_html(nome_download):
+    nm = _esc_js(nome_download or "documento.html")
+    css = (
+        "<style>/*" + _EDITOR_MARCADOR + "*/"
+        "#ndbar{position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;gap:8px;"
+        "font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
+        "#ndbar button{border:none;border-radius:999px;padding:8px 15px;font-size:14px;"
+        "cursor:pointer;box-shadow:0 4px 14px rgba(31,30,27,.22);background:#515E52;"
+        "color:#E5E0D5;font-weight:600;line-height:1}"
+        "#ndbar button.alt{background:#9A4A2E;color:#E5E0D5}"
+        "body.ndediting{outline:2px dashed rgba(154,74,46,.55);outline-offset:-8px}"
+        "@media print{#ndbar{display:none!important}}"
+        "</style>"
+    )
+    barra = (
+        "<div id=\"ndbar\" contenteditable=\"false\">"
+        "<button id=\"ndedit\" type=\"button\">Editar</button>"
+        "<button id=\"ndsave\" type=\"button\" class=\"alt\">Salvar HTML</button>"
+        "</div>"
+    )
+    js = (
+        "<script>/*" + _EDITOR_MARCADOR + "*/(function(){"
+        "if(window.__ndInit){return;}window.__ndInit=true;"
+        "var NM=\"" + nm + "\";window.__ndEdit=false;"
+        "function bar(){return document.getElementById('ndbar');}"
+        "function setEdit(on){window.__ndEdit=!!on;"
+        "document.body.setAttribute('contenteditable',on?'true':'false');"
+        "document.body.classList.toggle('ndediting',!!on);"
+        "var bb=bar();if(bb){bb.setAttribute('contenteditable','false');}"
+        "var e=document.getElementById('ndedit');if(e){e.textContent=on?'Editando':'Editar';}}"
+        "function save(){var was=window.__ndEdit;if(was){setEdit(false);}"
+        "var html='<!DOCTYPE html>\\n'+document.documentElement.outerHTML;"
+        "var blob=new Blob([html],{type:'text/html;charset=utf-8'});"
+        "var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=NM;"
+        "document.body.appendChild(a);a.click();"
+        "setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);"
+        "if(was){setEdit(true);}}"
+        "var eb=document.getElementById('ndedit');"
+        "if(eb){eb.addEventListener('click',function(){setEdit(!window.__ndEdit);});}"
+        "var sb=document.getElementById('ndsave');"
+        "if(sb){sb.addEventListener('click',save);}"
+        "document.addEventListener('keydown',function(ev){"
+        "if((ev.ctrlKey||ev.metaKey)&&(ev.key==='s'||ev.key==='S')){ev.preventDefault();save();}"
+        "},true);"
+        "})();</script>"
+    )
+    return css + barra + js
+
+
+def _injetar_editor(html, nome_download):
+    # Insere a barra antes de </body>. Idempotente: se o marcador ja existe (arquivo salvo
+    # sendo reinjetado), devolve intacto - nunca duplica a barra.
+    if not html:
+        return html or ""
+    if _EDITOR_MARCADOR in html:
+        return html
+    bloco = _bloco_editor_html(nome_download)
+    idx = html.lower().rfind("</body>")
+    if idx == -1:
+        return html + bloco
+    return html[:idx] + bloco + html[idx:]
+
+
 def _logo_b64(cor):
     import base64
 
@@ -400,6 +493,7 @@ DECK_JS = (
     "D.forEach(function(d,k){d.classList.toggle('on',k===i);});"
     "var c=document.getElementById('cnt');if(c){c.textContent=(i+1)+' / '+S.length;}}"
     "document.addEventListener('keydown',function(e){"
+    "if(window.__ndEdit){return;}"
     "if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){e.preventDefault();go(i+1);}"
     "if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1);}});"
     "go(0);</script>"
@@ -694,6 +788,9 @@ class Tools:
         # v2.3.0: ecossistema usado na nomenclatura quando o pipe nao informa uma sigla
         # valida (ou informa uma fora da lista fechada). Nunca deixa o nome sem prefixo.
         ECOSSISTEMA_PADRAO: str = "TEC"
+        # v2.3.0: barra "Editar"/"Salvar HTML" no HTML e no deck gerados. Desligar aqui
+        # se algum cliente nao quiser o editor embutido.
+        EDITOR_HTML: bool = True
 
     def __init__(self):
         self.valves = self.Valves()
@@ -799,23 +896,31 @@ class Tools:
             if not conteudo:
                 return _diag_entrada_vazia("gerar_html", "html", html)
 
+            # Nome calculado ANTES da montagem: o bloco do editor precisa dele (e o nome
+            # sugerido no download do "Salvar HTML").
+            nome = _nome_padrao(titulo, ecossistema, "html", versao,
+                                self.valves.ECOSSISTEMA_PADRAO)
+            com_editor = self.valves.EDITOR_HTML
+
             def _montar():
                 c = conteudo
-                # Se vier so um fragmento, embrulha num documento HTML minimo.
+                # Se vier so um fragmento, embrulha num documento HTML minimo. O titulo e
+                # ESCAPADO: '<' ou '&' no titulo quebrariam a tag <title> (bug 2.5).
                 if "<html" not in c.lower():
                     c = (
                         '<!DOCTYPE html>\n<html lang="pt-br"><head><meta charset="utf-8">'
                         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-                        "<title>" + (titulo or "Documento") + "</title></head><body>\n"
+                        "<title>" + _esc(titulo or "Documento") + "</title></head><body>\n"
                         + c + "\n</body></html>"
                     )
                 # _injetar_marca_html le fontes/logo do disco (IO) - por isso
                 # roda aqui dentro da thread.
-                return _injetar_marca_html(c).encode("utf-8")
+                c = _injetar_marca_html(c)
+                if com_editor:
+                    c = _injetar_editor(c, nome)
+                return c.encode("utf-8")
 
             data = await asyncio.to_thread(_montar)
-            nome = _nome_padrao(titulo, ecossistema, "html", versao,
-                                self.valves.ECOSSISTEMA_PADRAO)
             link = await _salvar_e_linkar(
                 data, nome, "text/html", _get_user_id(__user__)
             )
@@ -855,6 +960,11 @@ class Tools:
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_apresentacao_html", "slides", raw)
+
+        # Nome ANTES da montagem (o editor precisa dele para o download).
+        nome = _nome_padrao(titulo, ecossistema, "html", versao,
+                            self.valves.ECOSSISTEMA_PADRAO)
+        com_editor = self.valves.EDITOR_HTML
 
         def _montar():
             faces = "".join(
@@ -903,10 +1013,11 @@ class Tools:
                 "<style>" + faces + DECK_CSS + "</style></head><body>"
                 "<div class='deck'>" + deck + "</div>" + nav + DECK_JS + "</body></html>"
             )
+            if com_editor:
+                html = _injetar_editor(html, nome)
             return html.encode("utf-8")
 
         data = await asyncio.to_thread(_montar)
-        nome = _nome_padrao(titulo, ecossistema, "html", versao, self.valves.ECOSSISTEMA_PADRAO)
         link = await _salvar_e_linkar(
             data, nome, "text/html", _get_user_id(__user__)
         )
