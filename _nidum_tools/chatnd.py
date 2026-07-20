@@ -1,9 +1,16 @@
 """
 title: ChatND
 author: Nidum
-version: 1.40.0
+version: 1.41.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.41.0:
+    - NOMENCLATURA (par da tool 2.3.0): o GERADOR agora emite um campo 'ecossistema' (sigla
+      da lista fechada FONTE/REG/MKT/PROD/OPS/FIN/JUR/ACA/TEC/SUS/CC/CT/CE), escolhido pelo
+      ASSUNTO do documento. _gerar_arquivo repassa ecossistema=eco por argumento nomeado aos
+      6 metodos da tool, que montam o nome ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext. Sigla vazia/
+      invalida cai no padrao da tool - o nome NUNCA derruba a geracao. REPUBLICAR pipe+tool
+      juntos (a tool 2.3.0 precisa aceitar o argumento).
   1.40.0:
     - ROTEAMENTO: pedido de ARQUIVO caia em 'documentos'. Sintoma real: "transforme isso
       num html com a identidade da Nidum" -> rota 'documentos' -> o modelo despejou ~900
@@ -726,6 +733,7 @@ GERADOR = (
     "{\n"
     '  "tipo": "pptx" | "xlsx" | "docx" | "pdf" | "html",\n'
     '  "titulo": "titulo do arquivo",\n'
+    '  "ecossistema": "sigla do ecossistema para a nomenclatura (ver ECOSSISTEMA abaixo)",\n'
     '  "slides": [ {"tipo":"capa|secao|conteudo|destaque|divisao|numerada|cartoes|encerramento",'
     '"titulo":"...","subtitulo":"...","texto":"...","bullets":["..."],'
     '"cor":"verde|azul|terracota|preto","itens":[{"titulo":"...","texto":"..."}]} ],\n'
@@ -735,6 +743,13 @@ GERADOR = (
     "}\n"
     "Inclua apenas o campo de conteudo correspondente ao tipo (slides para pptx; "
     "planilhas para xlsx; secoes para docx/pdf; html para html).\n"
+    "ECOSSISTEMA (nomenclatura oficial do arquivo): escolha UMA sigla para 'ecossistema' "
+    "pelo ASSUNTO do documento, NAO pela area de quem pediu. Lista fechada: FONTE "
+    "(institucional/fundador), REG (regulatorio), MKT (marketing/comunicacao/marca), PROD "
+    "(produto), OPS (operacoes), FIN (financeiro), JUR (juridico), ACA (academia/formacao), "
+    "TEC (tecnologia), SUS (sustentabilidade), CC, CT, CE (comites). Na duvida entre duas, "
+    "vale o assunto do documento. Se realmente nao souber, use \"\" (o gerador aplica um "
+    "padrao) - nunca invente uma sigla fora da lista.\n"
     "IMPORTANTE: APRESENTACAO/SLIDES/DECK sempre usam o campo 'slides' (estrutura "
     "acima), nunca um HTML escrito a mao. Se o usuario quer a apresentacao em HTML, "
     "web ou navegavel, use tipo 'apresentacao' (vira um deck HTML navegavel, com "
@@ -2315,30 +2330,34 @@ class Pipe:
             )
         tipo = (dados.get("tipo") or "pptx").lower()
         titulo = dados.get("titulo") or "Documento"
+        # Ecossistema para a nomenclatura oficial do arquivo (gerador 2.3.0+). Passado por
+        # argumento NOMEADO: se a sigla vier vazia ou invalida, o gerador cai no padrao e
+        # NUNCA falha por causa do nome. Requer a tool 2.3.0 republicada junto com o pipe.
+        eco = dados.get("ecossistema") or ""
         tool = await self._get_tool()
         if tipo == "xlsx":
             saida = await tool.gerar_xlsx(
-                titulo, dados.get("planilhas") or [], True, __user__
+                titulo, dados.get("planilhas") or [], True, __user__, ecossistema=eco
             )
         elif tipo == "docx":
             saida = await tool.gerar_docx(
-                titulo, dados.get("secoes") or [], True, __user__
+                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco
             )
         elif tipo == "pdf":
             saida = await tool.gerar_pdf(
-                titulo, dados.get("secoes") or [], True, __user__
+                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco
             )
         elif tipo in ("apresentacao", "apresentacao_html", "slides_html", "deck"):
             saida = await tool.gerar_apresentacao_html(
-                titulo, dados.get("slides") or [], __user__
+                titulo, dados.get("slides") or [], __user__, ecossistema=eco
             )
         elif tipo == "html":
             saida = await tool.gerar_html(
-                titulo, dados.get("html") or "", __user__
+                titulo, dados.get("html") or "", __user__, ecossistema=eco
             )
         else:
             saida = await tool.gerar_pptx(
-                titulo, dados.get("slides") or [], True, __user__
+                titulo, dados.get("slides") or [], True, __user__, ecossistema=eco
             )
         # Item 2 (escopo por arquivo): se o pedido juntava varios modulos/partes
         # e o arquivo saiu OK, oferecer gerar os demais - um por vez.

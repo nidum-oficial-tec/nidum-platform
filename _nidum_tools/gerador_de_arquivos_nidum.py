@@ -6,6 +6,17 @@ description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no s
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
   2.3.0:
+    - NOMENCLATURA OFICIAL (Tec_Office_e_Governanca_de_Dados_v2, slide 7): arquivos agora
+      saem como ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext (ex.: MKT_Campanha_01-06-2026_v1.pptx),
+      no lugar de titulo.replace(" ","_")+.ext (sem ecossistema, sem data, sem versao, com
+      acento e barra crus). Helper _nome_padrao: fold de acento p/ ASCII, TEMA em CamelCase
+      (<=60 chars), DATA no fuso de Brasilia (UTC-3 - o servidor roda em UTC; sem isto,
+      arquivo gerado depois das 21h ganhava a data do dia seguinte), ECOSSISTEMA validado
+      contra lista fechada (FONTE/REG/MKT/PROD/OPS/FIN/JUR/ACA/TEC/SUS/CC/CT/CE). Sigla
+      vazia/invalida cai na valve ECOSSISTEMA_PADRAO (default TEC) e loga - o nome NUNCA
+      derruba a geracao. Os 6 metodos ganharam ecossistema="" e versao=1 DEPOIS de __user__
+      (nao quebra chamadas posicionais). Par: pipe chatnd 1.41.0 emite 'ecossistema' no
+      GERADOR - republicar os dois juntos.
     - PALETA CORRIGIDA para o brandbook oficial (MKT_BrandbookNidum V1). Tres das seis
       cores estavam quase certas mas erradas, algumas cravadas a mao no CSS ignorando as
       constantes: musgo 647260 -> 515E52; pedra 8A8880 -> 9D9890; areia EAE6DC -> E5E0D5.
@@ -47,10 +58,66 @@ import json
 import logging
 import uuid
 import inspect
+import re
+import datetime
+import unicodedata
 
 from pydantic import BaseModel
 
 log = logging.getLogger("gerador_nidum")
+
+
+# ----------------------------------------------------------------------------
+# Nomenclatura oficial de arquivos (Tec_Office_e_Governanca_de_Dados_v2, slide 7):
+#   ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext   (ex.: MKT_CampanhaLancamento_01-06-2026_v1.pptx)
+# NUNCA falha por causa do nome (o arquivo TEM que sair): ecossistema vazio/invalido cai
+# no padrao (valve ECOSSISTEMA_PADRAO) e loga; acento e reduzido a ASCII.
+# ----------------------------------------------------------------------------
+_ECOSSISTEMAS = ("FONTE", "REG", "MKT", "PROD", "OPS", "FIN", "JUR", "ACA",
+                 "TEC", "SUS", "CC", "CT", "CE")
+
+
+def _fold_ascii(txt):
+    # Acento quebra download em alguns clientes: reduz a ASCII. Preserva a CAIXA (o nome
+    # usa CamelCase), ao contrario do _normalizar_ascii do pipe, que abaixa tudo.
+    return (unicodedata.normalize("NFKD", txt or "")
+            .encode("ascii", "ignore").decode("ascii"))
+
+
+def _tema_camel(titulo, limite=60):
+    # TEMA em CamelCase, so [A-Za-z0-9], cortado a ~limite chars.
+    palavras = re.findall(r"[A-Za-z0-9]+", _fold_ascii(titulo or ""))
+    camel = "".join(p[:1].upper() + p[1:] for p in palavras) or "Documento"
+    return camel[:limite]
+
+
+def _data_brasilia():
+    # DD-MM-AAAA no fuso de Brasilia (UTC-3, fixo - o Brasil nao tem mais horario de
+    # verao). O servidor roda em UTC; sem isto, um arquivo gerado depois das 21h (UTC)
+    # ganharia a data do dia SEGUINTE.
+    tz = datetime.timezone(datetime.timedelta(hours=-3))
+    return datetime.datetime.now(tz).strftime("%d-%m-%Y")
+
+
+def _nome_padrao(titulo, ecossistema, extensao, versao=1, padrao="TEC"):
+    # Monta ECOSSISTEMA_TEMA_DATA_vN.ext. Robusto a lixo: sigla invalida -> padrao (+log);
+    # versao nao-inteira -> 1; extensao com ou sem ponto. Nunca levanta por causa do nome.
+    eco = _fold_ascii(str(ecossistema or "")).strip().upper()
+    if eco not in _ECOSSISTEMAS:
+        if eco:
+            log.warning("gerador_nidum: ecossistema %r invalido - usando padrao %r",
+                        ecossistema, padrao)
+        eco = _fold_ascii(str(padrao or "TEC")).strip().upper()
+        if eco not in _ECOSSISTEMAS:
+            eco = "TEC"
+    try:
+        v = int(versao)
+    except Exception:
+        v = 1
+    if v < 1:
+        v = 1
+    ext = str(extensao or "").lstrip(".").lower() or "bin"
+    return "%s_%s_%s_v%d.%s" % (eco, _tema_camel(titulo), _data_brasilia(), v, ext)
 
 # ----------------------------------------------------------------------------
 # Identidade visual da Nidum (brandbook MKT) - cores em hex, sem o '#'
@@ -624,7 +691,9 @@ class Tools:
     class Valves(BaseModel):
         # v2.2.0: OPENWEBUI_BASE_URL e OPENWEBUI_API_KEY removidas - nunca eram
         # usadas no codigo (campo de secret morto).
-        pass
+        # v2.3.0: ecossistema usado na nomenclatura quando o pipe nao informa uma sigla
+        # valida (ou informa uma fora da lista fechada). Nunca deixa o nome sem prefixo.
+        ECOSSISTEMA_PADRAO: str = "TEC"
 
     def __init__(self):
         self.valves = self.Valves()
@@ -634,7 +703,8 @@ class Tools:
     # para o LOG do servidor; o chat recebe mensagem limpa com codigo de erro.
     # ------------------------------------------------------------------
     async def gerar_pptx(
-        self, titulo: str, slides: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, slides: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera uma apresentacao PowerPoint (.pptx) e devolve um link de download.
 
@@ -643,15 +713,18 @@ class Tools:
             tipo ('capa'/'secao'/'conteudo'/'encerramento'), titulo,
             subtitulo (opcional), bullets (opcional, lista), texto (opcional).
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._pptx(titulo, slides, marca, __user__)
+            return await self._pptx(titulo, slides, marca, __user__, ecossistema, versao)
         except Exception:
             return _erro_limpo("gerar_pptx")
 
     async def gerar_xlsx(
-        self, titulo: str, planilhas: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, planilhas: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera uma planilha Excel (.xlsx) e devolve um link de download.
 
@@ -659,15 +732,18 @@ class Tools:
         :param planilhas: lista de abas. Cada aba e um dicionario com:
             nome, cabecalhos (lista), linhas (lista de listas).
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._xlsx(titulo, planilhas, marca, __user__)
+            return await self._xlsx(titulo, planilhas, marca, __user__, ecossistema, versao)
         except Exception:
             return _erro_limpo("gerar_xlsx")
 
     async def gerar_docx(
-        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera um documento Word (.docx) e devolve um link de download.
 
@@ -675,15 +751,18 @@ class Tools:
         :param secoes: lista de secoes. Cada secao e um dicionario com:
             heading, paragrafos (opcional, lista), bullets (opcional, lista).
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._docx(titulo, secoes, marca, __user__)
+            return await self._docx(titulo, secoes, marca, __user__, ecossistema, versao)
         except Exception:
             return _erro_limpo("gerar_docx")
 
     async def gerar_pdf(
-        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera um documento PDF e devolve um link de download.
 
@@ -692,20 +771,25 @@ class Tools:
             heading, paragrafos (opcional, lista), bullets (opcional, lista),
             tabela (opcional, lista de listas).
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._pdf(titulo, secoes, marca, __user__)
+            return await self._pdf(titulo, secoes, marca, __user__, ecossistema, versao)
         except Exception:
             return _erro_limpo("gerar_pdf")
 
     async def gerar_html(
-        self, titulo: str, html: str, __user__: dict = None
+        self, titulo: str, html: str, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera um arquivo HTML (.html) e devolve um link de download.
 
         :param titulo: titulo/nome do arquivo.
         :param html: documento HTML completo (string), pronto para abrir no navegador.
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
@@ -730,7 +814,8 @@ class Tools:
                 return _injetar_marca_html(c).encode("utf-8")
 
             data = await asyncio.to_thread(_montar)
-            nome = (titulo or "pagina").strip().replace(" ", "_") + ".html"
+            nome = _nome_padrao(titulo, ecossistema, "html", versao,
+                                self.valves.ECOSSISTEMA_PADRAO)
             link = await _salvar_e_linkar(
                 data, nome, "text/html", _get_user_id(__user__)
             )
@@ -739,7 +824,8 @@ class Tools:
             return _erro_limpo("gerar_html")
 
     async def gerar_apresentacao_html(
-        self, titulo: str, slides: list, __user__: dict = None
+        self, titulo: str, slides: list, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera uma APRESENTACAO em HTML navegavel (deck) com a identidade Nidum.
 
@@ -747,10 +833,14 @@ class Tools:
         cantos arredondados, transicoes, contraste correto e fonte embutida.
         :param slides: mesma estrutura do gerar_pptx (lista de slides com tipo,
             titulo, subtitulo, texto, bullets, cor, itens).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._apresentacao_html(titulo, slides, __user__)
+            return await self._apresentacao_html(
+                titulo, slides, __user__, ecossistema, versao
+            )
         except Exception:
             return _erro_limpo("gerar_apresentacao_html")
 
@@ -759,7 +849,8 @@ class Tools:
     # v2.2.0: a montagem pesada roda em asyncio.to_thread para NAO travar o
     # event loop do Open WebUI (um render grande congelava todos os usuarios).
     # ------------------------------------------------------------------
-    async def _apresentacao_html(self, titulo, slides, __user__):
+    async def _apresentacao_html(self, titulo, slides, __user__,
+                                 ecossistema="", versao=1):
         raw = slides
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
@@ -815,13 +906,14 @@ class Tools:
             return html.encode("utf-8")
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "apresentacao").strip().replace(" ", "_") + ".html"
+        nome = _nome_padrao(titulo, ecossistema, "html", versao, self.valves.ECOSSISTEMA_PADRAO)
         link = await _salvar_e_linkar(
             data, nome, "text/html", _get_user_id(__user__)
         )
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _pptx(self, titulo, slides, marca, __user__):
+    async def _pptx(self, titulo, slides, marca, __user__,
+                    ecossistema="", versao=1):
         raw_slides = slides
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
@@ -1145,12 +1237,13 @@ class Tools:
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "apresentacao").strip().replace(" ", "_") + ".pptx"
+        nome = _nome_padrao(titulo, ecossistema, "pptx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _xlsx(self, titulo, planilhas, marca, __user__):
+    async def _xlsx(self, titulo, planilhas, marca, __user__,
+                    ecossistema="", versao=1):
         raw_planilhas = planilhas
         planilhas = _lista_de_dicts(planilhas)
         if not planilhas:
@@ -1234,12 +1327,13 @@ class Tools:
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "planilha").strip().replace(" ", "_") + ".xlsx"
+        nome = _nome_padrao(titulo, ecossistema, "xlsx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _docx(self, titulo, secoes, marca, __user__):
+    async def _docx(self, titulo, secoes, marca, __user__,
+                    ecossistema="", versao=1):
         raw_secoes = secoes
         secoes = _itens_loose(secoes, _texto_para_secao)
         if not secoes:
@@ -1321,12 +1415,13 @@ class Tools:
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "documento").strip().replace(" ", "_") + ".docx"
+        nome = _nome_padrao(titulo, ecossistema, "docx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _pdf(self, titulo, secoes, marca, __user__):
+    async def _pdf(self, titulo, secoes, marca, __user__,
+                   ecossistema="", versao=1):
         raw_secoes = secoes
         secoes = _itens_loose(secoes, _texto_para_secao)
         if not secoes:
@@ -1502,7 +1597,7 @@ class Tools:
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "documento").strip().replace(" ", "_") + ".pdf"
+        nome = _nome_padrao(titulo, ecossistema, "pdf", versao, self.valves.ECOSSISTEMA_PADRAO)
         link = await _salvar_e_linkar(
             data, nome, "application/pdf", _get_user_id(__user__)
         )
