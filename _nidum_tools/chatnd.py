@@ -1,9 +1,16 @@
 """
 title: ChatND
 author: Nidum
-version: 1.41.0
+version: 1.42.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.42.0:
+    - PALETA do IMAGEM_PROMPT alinhada ao brandbook oficial (MKT_BrandbookNidum V1): as
+      cores da marca que a rota de imagem oferecia quando o usuario pede 'com as cores da
+      Nidum' estavam desatualizadas (verde oliva #647260, creme #EAE6DC). Agora: terracota
+      #9A4A2E, musgo #515E52, ceu #4F7187, areia #E5E0D5, pedra #9D9890, escuro #1F1E1B -
+      os mesmos hexes que a tool 2.3.0 usa. So a orientacao textual de geracao de imagem;
+      nao muda roteamento nem travas.
   1.41.0:
     - NOMENCLATURA (par da tool 2.3.0): o GERADOR agora emite um campo 'ecossistema' (sigla
       da lista fechada FONTE/REG/MKT/PROD/OPS/FIN/JUR/ACA/TEC/SUS/CC/CT/CE), escolhido pelo
@@ -811,9 +818,9 @@ IMAGEM_PROMPT = (
     "composicao, iluminacao e fidelidade ao pedido do usuario. Por padrao, "
     "produza uma descricao fotorrealista neutra, sem estetica corporativa. "
     "Somente se o usuario pedir explicitamente elementos da marca (por ex., "
-    "'com as cores da Nidum', 'inclua o logo'), incorpore a paleta: terracota "
-    "(#9A4A2E), verde oliva (#647260), azul aco (#4F7187) e tons creme "
-    "(#EAE6DC). "
+    "'com as cores da Nidum', 'inclua o logo'), incorpore a paleta oficial: terracota "
+    "(#9A4A2E), musgo (#515E52), ceu (#4F7187), areia (#E5E0D5), pedra (#9D9890) e "
+    "escuro (#1F1E1B). "
     "Se o pedido nao for uma solicitacao de imagem que possa ser criada a partir "
     "de texto, ou se depender de um anexo/arquivo que nao foi fornecido no texto, "
     "NAO invente uma descricao. Nesse caso responda EXATAMENTE com 'SEM_IMAGEM: ' "
