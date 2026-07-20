@@ -1,10 +1,18 @@
 """
 title: Gerador de Arquivos Nidum
 author: Nidum
-version: 2.3.0
+version: 2.4.0
 description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Devolve link de download nativo.
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
+  2.4.0:
+    - APROVACAO DE MARCA (auditoria da 2.3.0). Fatia A (contraste/cores): a regra "pedra e
+      SUPORTE, nunca texto sobre areia" (2.18:1) tinha sido consertada na 2.3.0 so no HTML/
+      deck; estendida agora aos 3 formatos que faltavam - antetitulos do PPTX e assinaturas
+      de rodape do PDF e DOCX: pedra 9D9890 -> escuro 1F1E1B. Bordas de tabela em cor nao-
+      oficial DEDAD0 -> pedra 9D9890 (aqui pedra e uso CERTO: filete) no HTML/XLSX/PDF.
+      Tons fora da paleta -> escuro: texto de citacao do HTML (5b574f) e palco do deck
+      (15140f, decisao do dono: escuro oficial, nao um tom mais escuro que a paleta).
   2.3.0:
     - EDITOR HTML embutido: barra fixa "Editar"/"Salvar HTML" no HTML e no deck gerados.
       Editar liga contenteditable no corpo (a barra fica de fora); Salvar serializa a pagina
@@ -251,7 +259,7 @@ def _brand_css():
         "strong,b{color:#9A4A2E;font-weight:700;}"
         "ul,ol{margin:0 0 1.1em 1.3em;} li{margin:.45em 0;}"
         "blockquote{margin:1.7em 0;padding:.7em 1.5em;border-left:4px solid #9A4A2E;"
-        "background:#FFFFFF;border-radius:0 12px 12px 0;color:#5b574f;font-style:italic;}"
+        "background:#FFFFFF;border-radius:0 12px 12px 0;color:#1F1E1B;font-style:italic;}"
         "hr{border:none;border-top:2px solid rgba(157,152,144,.32);margin:2.4em 0;}"
         "img{max-width:100%;height:auto;border-radius:14px;"
         "box-shadow:0 12px 32px rgba(31,30,27,.15);}"
@@ -259,7 +267,7 @@ def _brand_css():
         "border-radius:12px;overflow:hidden;box-shadow:0 6px 20px rgba(31,30,27,.08);}"
         "th{background:#515E52;color:#E5E0D5;text-align:left;padding:12px 14px;"
         "font-weight:600;}"
-        "td{padding:11px 14px;border-bottom:1px solid #DEDAD0;}"
+        "td{padding:11px 14px;border-bottom:1px solid #9D9890;}"
         "tr:nth-child(even) td{background:rgba(255,255,255,.45);}"
         "tr:last-child td{border-bottom:none;}"
         "code{font-family:Consolas,Menlo,monospace;background:#FFFFFF;"
@@ -422,7 +430,7 @@ DECK_CSS = (
     ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;--cinza:#9D9890;"
     "--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;--rn:26px;"
     "--sc:0 26px 70px rgba(31,30,27,.34)}"
-    "html,body{height:100%;background:#15140f;"
+    "html,body{height:100%;background:#1F1E1B;"
     "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
     ".deck{position:fixed;inset:0;display:flex;align-items:center;"
     "justify-content:center;padding:3vh 3vw}"
@@ -1225,7 +1233,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_r.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 13, cinza, upper=True)
+                        estilo(pa, 13, preto, upper=True)
                         first = False
                     if s.get("texto"):
                         p = tf_r.paragraphs[0] if first else tf_r.add_paragraph()
@@ -1245,7 +1253,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_t.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 14, cinza, upper=True)
+                        estilo(pa, 14, preto, upper=True)
                         pt = tf_t.add_paragraph()
                     else:
                         pt = tf_t.paragraphs[0]
@@ -1279,7 +1287,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_t.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 14, cinza, upper=True)
+                        estilo(pa, 14, preto, upper=True)
                         pt = tf_t.add_paragraph()
                     else:
                         pt = tf_t.paragraphs[0]
@@ -1312,7 +1320,7 @@ class Tools:
                     if s.get("texto"):
                         p2 = tf.add_paragraph()
                         p2.text = s["texto"]
-                        estilo(p2, 14, cinza if marca else preto, align=PP_ALIGN.CENTER)
+                        estilo(p2, 14, preto, align=PP_ALIGN.CENTER)
 
                 else:
                     if marca:
@@ -1321,7 +1329,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_t.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 14, cinza if marca else preto, upper=True)
+                        estilo(pa, 14, preto, upper=True)
                         pt = tf_t.add_paragraph()
                     else:
                         pt = tf_t.paragraphs[0]
@@ -1373,7 +1381,7 @@ class Tools:
             f_body = Font(name=NIDUM_FONT, size=11, color=NIDUM_PRETO)
             fill_header = PatternFill("solid", fgColor=NIDUM_VERDE)
             fill_alt = PatternFill("solid", fgColor=NIDUM_CREME_ALT)
-            linha_side = Side(style="thin", color="DEDAD0")
+            linha_side = Side(style="thin", color=NIDUM_CINZA)
             borda_b = Border(bottom=linha_side)
             al_h = Alignment(horizontal="left", vertical="center")
             al_b = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -1516,7 +1524,7 @@ class Tools:
                     fr = fp.add_run("nidum  -  fazer da casa um ninho.")
                     fr.font.name = NIDUM_FONT
                     fr.font.size = Pt(8)
-                    fr.font.color.rgb = cinza
+                    fr.font.color.rgb = ink
                     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 except Exception:
                     log.exception("gerador_nidum: falha ao aplicar rodape docx")
@@ -1565,7 +1573,7 @@ class Tools:
             cinza = colors.HexColor("#" + NIDUM_CINZA)
             branco = colors.HexColor("#" + NIDUM_BRANCO)
             ink = preto
-            linha_cor = colors.HexColor("#DEDAD0")
+            linha_cor = colors.HexColor("#" + NIDUM_CINZA)
 
             # Registra a fonte da marca (fallback Helvetica se nao encontrar)
             FONT = "Helvetica"
@@ -1631,7 +1639,7 @@ class Tools:
                 canvas.setFillColor(creme)
                 canvas.rect(0, 0, doc.pagesize[0], doc.pagesize[1], fill=1, stroke=0)
                 # rodape: assinatura + numero de pagina
-                canvas.setFillColor(cinza)
+                canvas.setFillColor(preto)
                 canvas.setFont(FONT, 8)
                 canvas.drawString(
                     22 * mm, 11 * mm, "nidum  -  fazer da casa um ninho."
