@@ -1,9 +1,29 @@
 """
 title: ChatND
 author: Nidum
-version: 1.42.0
-description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
+version: 1.43.0
+description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.43.0:
+    - IMAGEM ANEXADA PELO USUARIO entra no arquivo gerado (capacidade NOVA, nao regressao).
+      Antes, quem anexava uma foto e pedia "poe na apresentacao" recebia um PLACEHOLDER DE
+      TEXTO: a rota de arquivo montava o prompt so com texto e nunca olhava as partes de
+      imagem da mensagem, entao o modelo nao tinha como inserir nada. Agora a rota extrai o
+      anexo (REUSA _tem_anexo_imagem/_extrair_imagens_anexo, ja usados na rota de imagem) e
+      passa as imagens a tool por argumento NOMEADO (imagens=), no padrao do ecossistema=eco.
+      Requer a tool 2.5.0 republicada junto.
+    - DESENHO (a armadilha evitada): os BYTES NUNCA vao para modelo nenhum. Ao GERADOR vai
+      so um MARCADOR por imagem (IMAGEM_1, IMAGEM_2...) e a instrucao de posiciona-los pelo
+      campo "imagem" do slide/secao; os bytes seguem do pipe direto para a tool. Uma foto em
+      base64 no prompt seria um texto enorme - estouro de contexto e o 429 recem-resolvido.
+    - CORRIGIDO DE QUEBRA: _chamar_gerador monta o payload com 'messages' CRU, entao um
+      anexo ja mandava base64 ao modelo hoje, sem que ninguem usasse a imagem para nada.
+      Novo _msgs_sem_imagem() tira as partes de imagem (e 'files') das mensagens quando ha
+      anexo - o GERADOR passa a receber so o texto. Sem anexo, o caminho e o de antes.
+    - Schema do GERADOR ganhou o campo opcional "imagem" em slides e secoes, com a regra de
+      so usa-lo quando os marcadores forem oferecidos (instrucao DINAMICA, injetada apenas
+      quando ha anexo - sem anexo o modelo nao ouve falar de marcador e nao inventa um).
+      Instrucao explicita de NAO escrever placeholders de texto tipo "[inserir imagem aqui]".
   1.42.0:
     - PALETA do IMAGEM_PROMPT alinhada ao brandbook oficial (MKT_BrandbookNidum V1): as
       cores da marca que a rota de imagem oferecia quando o usuario pede 'com as cores da
@@ -743,13 +763,18 @@ GERADOR = (
     '  "ecossistema": "sigla do ecossistema para a nomenclatura (ver ECOSSISTEMA abaixo)",\n'
     '  "slides": [ {"tipo":"capa|secao|conteudo|destaque|divisao|numerada|cartoes|encerramento",'
     '"titulo":"...","subtitulo":"...","texto":"...","bullets":["..."],'
-    '"cor":"verde|azul|terracota|preto","itens":[{"titulo":"...","texto":"..."}]} ],\n'
+    '"cor":"verde|azul|terracota|preto","itens":[{"titulo":"...","texto":"..."}],'
+    '"imagem":"IMAGEM_1 (opcional)"} ],\n'
     '  "planilhas": [ {"nome":"...","cabecalhos":["..."],"linhas":[["..."]]} ],\n'
-    '  "secoes": [ {"heading":"...","paragrafos":["..."],"bullets":["..."]} ],\n'
+    '  "secoes": [ {"heading":"...","paragrafos":["..."],"bullets":["..."],'
+    '"imagem":"IMAGEM_1 (opcional)"} ],\n'
     '  "html": "documento HTML completo (use SO quando tipo=html)"\n'
     "}\n"
     "Inclua apenas o campo de conteudo correspondente ao tipo (slides para pptx; "
     "planilhas para xlsx; secoes para docx/pdf; html para html).\n"
+    "O campo \"imagem\" SO existe quando o usuario anexou imagens nesta conversa - e "
+    "nesse caso as instrucoes com os marcadores disponiveis aparecem no fim deste "
+    "prompt. Sem esses marcadores, NUNCA use o campo \"imagem\".\n"
     "ECOSSISTEMA (nomenclatura oficial do arquivo): escolha UMA sigla para 'ecossistema' "
     "pelo ASSUNTO do documento, NAO pela area de quem pediu. Lista fechada: FONTE "
     "(institucional/fundador), REG (regulatorio), MKT (marketing/comunicacao/marca), PROD "
@@ -1173,6 +1198,54 @@ def _extrair_imagens_anexo(m):
                 if isinstance(meta, dict):
                     _add(meta.get("url"))
     return urls
+
+
+def _msgs_sem_imagem(messages):
+    # Tira as PARTES de imagem das mensagens antes de mandar ao modelo GERADOR.
+    # POR QUE: uma foto anexada viaja como data-URL base64 dentro do content; como
+    # _chamar_gerador monta o payload com 'messages' CRU, esse base64 iria inteiro no
+    # prompt - texto enorme, estouro de contexto e o 429 que acabamos de resolver. O
+    # GERADOR nao precisa dos bytes: ele so decide ONDE a imagem entra, pelo marcador.
+    # Os bytes vao do pipe direto para a tool, por parametro. Custo de token: zero.
+    limpas = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        nova = m
+        c = m.get("content")
+        if isinstance(c, list):
+            nova = dict(m)
+            nova["content"] = " ".join(
+                str(p.get("text") or "")
+                for p in c
+                if isinstance(p, dict) and str(p.get("type") or "").lower() == "text"
+            ).strip()
+        if nova.get("files"):
+            nova = dict(nova)
+            nova.pop("files", None)
+        limpas.append(nova)
+    return limpas
+
+
+def _nota_imagens(n):
+    # Instrucao dinamica: so entra quando ha anexo. Sem anexo o GERADOR nao ouve falar
+    # de imagem nenhuma (nao inventa marcador).
+    marcs = ", ".join("IMAGEM_" + str(i + 1) for i in range(n))
+    plural = "imagens" if n > 1 else "imagem"
+    return (
+        "\nIMAGENS ANEXADAS PELO USUARIO: ele anexou " + str(n) + " " + plural
+        + " nesta conversa, identificada(s) por: " + marcs + ". Se o pedido for para "
+        "que apareca(m) no arquivo, POSICIONE cada marcador no slide (ou secao) mais "
+        "adequado ao contexto, usando o campo \"imagem\". Ex.: "
+        '{"tipo":"conteudo","titulo":"...","imagem":"IMAGEM_1"}. Para tipo=html, '
+        "escreva o marcador no ponto do documento onde a imagem deve aparecer. "
+        "Use cada marcador NO MAXIMO UMA VEZ e NUNCA invente um marcador que nao "
+        "esteja na lista acima. NAO escreva placeholders de texto do tipo '[inserir "
+        "imagem aqui]', '(imagem)' ou 'imagem do usuario' - a imagem e inserida pela "
+        "ferramenta a partir do campo, e um placeholder escrito sai no arquivo final "
+        "como texto solto. Voce NAO recebe o conteudo visual da imagem: decida a "
+        "posicao pelo que o usuario disse sobre ela."
+    )
 
 
 _MARCADOR_IMAGEM = "Imagem gerada pela Nidum a partir do pedido:"
@@ -2311,15 +2384,24 @@ class Pipe:
             )
         return ""
 
-    async def _gerar_arquivo(self, request, user, messages, __user__):
-        dados = await self._chamar_gerador(request, user, messages, GERADOR)
+    async def _gerar_arquivo(self, request, user, messages, __user__, imagens=None):
+        # imagens = anexos do usuario (data-URLs), extraidos pelo pipe na rota de
+        # arquivo. Os BYTES nunca entram no prompt: o GERADOR recebe so os marcadores
+        # (IMAGEM_1...) e devolve onde cada um entra; os bytes vao por parametro para
+        # a tool. Sem anexo, tudo segue identico ao caminho de antes.
+        imagens = imagens or []
+        sistema = GERADOR
+        if imagens:
+            messages = _msgs_sem_imagem(messages)
+            sistema = GERADOR + _nota_imagens(len(imagens))
+        dados = await self._chamar_gerador(request, user, messages, sistema)
         # Rede de seguranca: se o JSON falhou OU veio sem conteudo (ex.: slides
         # vazio por estouro de tamanho), tenta UMA vez com instrucao estrita.
         if not self._dados_uteis(dados):
             log.warning(
                 "chatnd: gerador devolveu JSON invalido/vazio; tentando reforco"
             )
-            reforco = GERADOR + (
+            reforco = sistema + (
                 "\n\nATENCAO: a tentativa anterior voltou VAZIA ou invalida. "
                 "Responda AGORA com UM JSON valido e COMPLETO, com o campo de "
                 "conteudo (slides/secoes/planilhas/html) preenchido. Sem prosa, "
@@ -2342,29 +2424,37 @@ class Pipe:
         # NUNCA falha por causa do nome. Requer a tool 2.3.0 republicada junto com o pipe.
         eco = dados.get("ecossistema") or ""
         tool = await self._get_tool()
+        # As imagens vao por argumento NOMEADO (mesmo padrao do ecossistema=eco): os
+        # bytes saem do pipe direto para a tool, sem passar por modelo nenhum. xlsx NAO
+        # recebe (imagem em planilha esta fora de escopo). Requer a tool 2.5.0.
         if tipo == "xlsx":
             saida = await tool.gerar_xlsx(
                 titulo, dados.get("planilhas") or [], True, __user__, ecossistema=eco
             )
         elif tipo == "docx":
             saida = await tool.gerar_docx(
-                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco
+                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco,
+                imagens=imagens,
             )
         elif tipo == "pdf":
             saida = await tool.gerar_pdf(
-                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco
+                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco,
+                imagens=imagens,
             )
         elif tipo in ("apresentacao", "apresentacao_html", "slides_html", "deck"):
             saida = await tool.gerar_apresentacao_html(
-                titulo, dados.get("slides") or [], __user__, ecossistema=eco
+                titulo, dados.get("slides") or [], __user__, ecossistema=eco,
+                imagens=imagens,
             )
         elif tipo == "html":
             saida = await tool.gerar_html(
-                titulo, dados.get("html") or "", __user__, ecossistema=eco
+                titulo, dados.get("html") or "", __user__, ecossistema=eco,
+                imagens=imagens,
             )
         else:
             saida = await tool.gerar_pptx(
-                titulo, dados.get("slides") or [], True, __user__, ecossistema=eco
+                titulo, dados.get("slides") or [], True, __user__, ecossistema=eco,
+                imagens=imagens,
             )
         # Item 2 (escopo por arquivo): se o pedido juntava varios modulos/partes
         # e o arquivo saiu OK, oferecer gerar os demais - um por vez.
@@ -2679,6 +2769,19 @@ class Pipe:
         if categoria == "arquivo":
             try:
                 msgs = body.get("messages") or []
+                # ANEXO DE IMAGEM na rota de arquivo (1.43.0). Era AQUI que o anexo se
+                # perdia: a rota montava o prompt so com texto e nunca olhava as partes
+                # de imagem da mensagem - o modelo, sem poder inserir nada, escrevia um
+                # placeholder. Reusa os mesmos detectores da rota de imagem.
+                _mu = _ultima_msg_usuario(msgs)
+                imagens_anexo = (
+                    _extrair_imagens_anexo(_mu) if _tem_anexo_imagem(_mu) else []
+                )
+                if imagens_anexo:
+                    log.info(
+                        "chatnd: rota de arquivo com %d imagem(ns) anexada(s)",
+                        len(imagens_anexo),
+                    )
                 if texto:
                     consulta = _texto_de_busca(body.get("messages"), 3) or texto
                     try:
@@ -2692,7 +2795,9 @@ class Pipe:
                         contexto = ""
                     if contexto:
                         msgs = self._injetar_contexto_arquivo(msgs, contexto)
-                return await self._gerar_arquivo(__request__, user, msgs, __user__)
+                return await self._gerar_arquivo(
+                    __request__, user, msgs, __user__, imagens_anexo
+                )
             except Exception as e:
                 log.exception("chatnd: falha na rota de arquivo")
                 return "Falha ao gerar o arquivo: " + str(e)
