@@ -1,10 +1,41 @@
 """
 title: Gerador de Arquivos Nidum
 author: Nidum
-version: 2.4.0
-description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Devolve link de download nativo.
+version: 2.5.0
+description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Insere imagens anexadas pelo usuario. Devolve link de download nativo.
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
+  2.5.0:
+    - IMAGEM ANEXADA PELO USUARIO (capacidade NOVA; par do pipe chatnd 1.43.0 - republicar
+      os dois juntos). Os metodos gerar_pptx, gerar_docx, gerar_pdf, gerar_html e
+      gerar_apresentacao_html ganharam 'imagens: list = None' DEPOIS dos parametros
+      existentes (chamadas atuais nao quebram). gerar_xlsx NAO recebe: imagem em planilha
+      esta fora de escopo. Os bytes chegam por PARAMETRO, vindos do pipe - nunca por modelo.
+    - COMO A POSICAO E DECIDIDA: o modelo poe um marcador ("IMAGEM_1") no campo 'imagem' do
+      slide/secao; _imagem_do_item resolve pelo NUMERO (tolerante a "imagem 1", "1"). Em
+      tipo=html nao ha campo, entao o marcador escrito no documento e substituido pela
+      imagem (_inserir_imagens_html trata tanto <img src="IMAGEM_1"> quanto o marcador
+      solto, e APAGA marcador orfao - senao "IMAGEM_1" sairia como texto cru no arquivo).
+    - LAYOUT. PPTX e deck: a imagem ganha o PROPRIO slide logo apos o slide que a
+      posicionou - os layouts (capa, cartoes, numerada, destaque) sao composicoes fechadas
+      e encaixar foto dentro deles colidiria com texto; em slide proprio ela aparece
+      grande, centralizada, com margem, com o titulo como legenda e a logo da marca.
+      DOCX/PDF: inline, centralizada, no fim da secao. PROPORCAO E INVIOLAVEL: _encaixar
+      calcula UM fator pelo lado limitante e aplica nos dois eixos (nunca estica nem
+      achata); reduz o quanto precisar e amplia no maximo 2x (_MAX_AMPLIACAO), para nao
+      deixar uma imagem pequena visivelmente pixelada.
+    - DEGRADACAO SEGURA (filosofia do RAG opcional): imagem problematica NUNCA derruba a
+      geracao. Formato detectado por MAGIC BYTES (jpeg/png/gif/webp), nao pelo mime
+      declarado - que mente. Bytes que nao sao imagem, formato que a lib do formato de
+      saida nao aceita (ex.: webp no PDF sem PIL com webp) ou falha na insercao: loga e o
+      arquivo sai SEM aquela imagem. Item invalido nao DESLOCA os marcadores dos demais.
+    - QUALIDADE: a imagem entra em RESOLUCAO ORIGINAL (bytes embutidos sem reamostrar nem
+      recomprimir - PPTX/DOCX byte-identicos; PDF faz passthrough do JPEG/DCTDecode). A
+      escala e do renderizador (PowerPoint/Word/leitor), em alta qualidade.
+    - TODO (trade-off consciente, NAO mexer agora): como a imagem entra em resolucao
+      original, um arquivo com varias fotos de celular pode ficar pesado (20 MB+) e
+      atrapalhar e-mail/SharePoint. Fica a favor da qualidade por ora; encarar so quando
+      incomodar (ex.: reamostrar acima de um teto de lado maior, com filtro LANCZOS).
   2.4.0:
     - APROVACAO DE MARCA (auditoria da 2.3.0). Fatia A (contraste/cores): a regra "pedra e
       SUPORTE, nunca texto sobre areia" (2.18:1) tinha sido consertada na 2.3.0 so no HTML/
@@ -208,6 +239,165 @@ def _logo_path(cor):
         return None
     p = os.path.join(d, "logos", "nidum-" + str(cor) + ".png")
     return p if os.path.isfile(p) else None
+
+
+# --------------------------------------------------------- imagens enviadas pelo usuario
+# Imagem que o USUARIO anexou no chat (2.5.0). Os bytes chegam do pipe por PARAMETRO
+# (imagens=), nunca por modelo: uma foto em base64 vira um texto enorme no prompt (estoura
+# contexto e provoca 429). O modelo so ve MARCADORES (IMAGEM_1, IMAGEM_2...) e diz ONDE
+# cada uma entra, pelo campo 'imagem' do slide/secao. Custo de token: zero.
+#
+# FILOSOFIA (igual a do RAG opcional): imagem problematica NUNCA derruba a geracao. Se nao
+# decodifica, se o formato nao e suportado pela lib do formato de saida, ou se a insercao
+# falha - loga e segue SEM a imagem. O arquivo sai.
+_MAX_AMPLIACAO = 2.0   # teto de ampliacao: acima disso, imagem pequena fica pixelada
+
+_ASSINATURAS_IMG = (
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+)
+
+
+def _formato_imagem(b):
+    # Detecta pelo CONTEUDO (magic bytes), nao pelo mime declarado - o mime do anexo
+    # mente com frequencia. Devolve "" quando nao reconhece (o chamador degrada).
+    if not b or len(b) < 12:
+        return ""
+    for assinatura, fmt in _ASSINATURAS_IMG:
+        if b.startswith(assinatura):
+            return fmt
+    if b[0:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+
+def _decodificar_imagem(item):
+    # Aceita bytes crus, data-URL base64 ("data:image/jpeg;base64,..."), base64 puro ou
+    # dict {"url"/"dados"/"bytes"} - o formato que _extrair_imagens_anexo (pipe) devolve
+    # e a data-URL. Devolve (bytes, formato); (None, "") quando nao da. NUNCA levanta.
+    import base64
+
+    try:
+        if isinstance(item, dict):
+            item = item.get("url") or item.get("dados") or item.get("bytes") or ""
+        if isinstance(item, (bytes, bytearray)):
+            b = bytes(item)
+        elif isinstance(item, str):
+            s = item.strip()
+            if not s:
+                return (None, "")
+            if s.startswith("data:"):
+                corte = s.find(",")
+                if corte < 0:
+                    return (None, "")
+                s = s[corte + 1:]
+            b = base64.b64decode(s)
+        else:
+            return (None, "")
+        fmt = _formato_imagem(b)
+        if not fmt:
+            log.warning(
+                "gerador_nidum: anexo descartado - formato de imagem nao reconhecido"
+            )
+            return (None, "")
+        return (b, fmt)
+    except Exception:
+        log.exception("gerador_nidum: falha ao decodificar imagem anexada")
+        return (None, "")
+
+
+def _normalizar_imagens(imagens):
+    # Lista vinda do pipe -> [{"marcador","bytes","formato"}]. A POSICAO define o
+    # marcador (a 1a e IMAGEM_1), exatamente como o pipe conta ao modelo. Um item
+    # invalido e descartado mas NAO desloca os demais - senao IMAGEM_2 viraria a 3a.
+    saida = []
+    for i, it in enumerate(_lista(imagens)):
+        b, fmt = _decodificar_imagem(it)
+        if not b:
+            continue
+        saida.append({"marcador": "IMAGEM_" + str(i + 1), "bytes": b, "formato": fmt})
+    return saida
+
+
+def _imagem_do_item(imagens_norm, item):
+    # Resolve o campo 'imagem' de um slide/secao. Tolerante ao que o modelo escreve:
+    # "IMAGEM_2", "imagem 2", "2" - vale o NUMERO. Sem casar -> None (sem imagem).
+    if not imagens_norm or not isinstance(item, dict):
+        return None
+    ref = item.get("imagem")
+    if ref is None or isinstance(ref, (list, dict)):
+        return None
+    m = re.search(r"(\d+)", str(ref))
+    if not m:
+        return None
+    alvo = "IMAGEM_" + m.group(1)
+    for img in imagens_norm:
+        if img["marcador"] == alvo:
+            return img
+    return None
+
+
+def _encaixar(nat_w, nat_h, box_w, box_h):
+    # Escala UNIFORME nos dois eixos para caber na caixa: a imagem nunca estica nem
+    # achata. Calcula pelo lado LIMITANTE (o menor fator) e deixa o outro seguir.
+    # Reduz o quanto precisar; amplia no maximo _MAX_AMPLIACAO.
+    try:
+        nat_w = float(nat_w)
+        nat_h = float(nat_h)
+        if nat_w <= 0 or nat_h <= 0:
+            return (box_w, box_h)
+        escala = min(float(box_w) / nat_w, float(box_h) / nat_h)
+        escala = min(escala, _MAX_AMPLIACAO)
+        return (nat_w * escala, nat_h * escala)
+    except Exception:
+        return (box_w, box_h)
+
+
+def _img_data_uri(img):
+    # <img src="data:..."> para os formatos HTML (deck e pagina). Autocontido.
+    import base64
+
+    try:
+        b64 = base64.b64encode(img["bytes"]).decode("ascii")
+        return "data:image/" + img["formato"] + ";base64," + b64
+    except Exception:
+        log.exception("gerador_nidum: falha ao embutir imagem no html")
+        return ""
+
+
+def _inserir_imagens_html(c, imagens_norm):
+    # Em tipo=html o modelo escreve HTML livre, entao nao ha campo 'imagem': ele posiciona
+    # o MARCADOR no documento e aqui ele vira a imagem de verdade. Dois jeitos que o modelo
+    # naturalmente escreve, ambos tratados:
+    #   1) <img src="IMAGEM_1">  -> troca so o src (preserva a tag e os atributos dele)
+    #   2) IMAGEM_1 solto        -> vira um <figure> centralizado com margem
+    # Marcador sem imagem correspondente e APAGADO: melhor nada do que "IMAGEM_1" cru
+    # aparecendo no documento final (era exatamente o sintoma do placeholder de texto).
+    if not c:
+        return c
+    for img in imagens_norm or []:
+        uri = _img_data_uri(img)
+        if not uri:
+            continue
+        marc = img["marcador"]
+        c = re.sub(
+            r"""(<img\b[^>]*\bsrc\s*=\s*)(['"])\s*""" + marc + r"""\s*\2""",
+            lambda m: m.group(1) + m.group(2) + uri + m.group(2),
+            c,
+            flags=re.IGNORECASE,
+        )
+        figura = (
+            '<figure style="margin:28px auto;text-align:center;max-width:100%">'
+            '<img src="' + uri + '" alt="" style="max-width:100%;height:auto;'
+            'display:block;margin:0 auto;border-radius:10px">'
+            "</figure>"
+        )
+        c = re.sub(r"\b" + marc + r"\b", figura, c, flags=re.IGNORECASE)
+    # Varre marcadores orfaos (o modelo citou IMAGEM_9 sem existir) - nao deixa lixo.
+    c = re.sub(r"\bIMAGEM_\d+\b", "", c, flags=re.IGNORECASE)
+    return c
 
 
 def _font_path(fname):
@@ -834,21 +1024,26 @@ class Tools:
     # ------------------------------------------------------------------
     async def gerar_pptx(
         self, titulo: str, slides: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera uma apresentacao PowerPoint (.pptx) e devolve um link de download.
 
         :param titulo: titulo geral da apresentacao.
         :param slides: lista de slides. Cada slide e um dicionario com:
             tipo ('capa'/'secao'/'conteudo'/'encerramento'), titulo,
-            subtitulo (opcional), bullets (opcional, lista), texto (opcional).
+            subtitulo (opcional), bullets (opcional, lista), texto (opcional),
+            imagem (opcional, marcador tipo 'IMAGEM_1').
         :param marca: aplica a identidade visual da Nidum (padrao True).
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
+            ordem dos marcadores IMAGEM_1, IMAGEM_2... Vem do pipe por parametro,
+            nunca de um modelo.
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._pptx(titulo, slides, marca, __user__, ecossistema, versao)
+            return await self._pptx(titulo, slides, marca, __user__, ecossistema,
+                                    versao, imagens)
         except Exception:
             return _erro_limpo("gerar_pptx")
 
@@ -873,46 +1068,53 @@ class Tools:
 
     async def gerar_docx(
         self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera um documento Word (.docx) e devolve um link de download.
 
         :param titulo: titulo do documento.
         :param secoes: lista de secoes. Cada secao e um dicionario com:
-            heading, paragrafos (opcional, lista), bullets (opcional, lista).
+            heading, paragrafos (opcional, lista), bullets (opcional, lista),
+            imagem (opcional, marcador tipo 'IMAGEM_1').
         :param marca: aplica a identidade visual da Nidum (padrao True).
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
+            ordem dos marcadores IMAGEM_1, IMAGEM_2...
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._docx(titulo, secoes, marca, __user__, ecossistema, versao)
+            return await self._docx(titulo, secoes, marca, __user__, ecossistema,
+                                    versao, imagens)
         except Exception:
             return _erro_limpo("gerar_docx")
 
     async def gerar_pdf(
         self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera um documento PDF e devolve um link de download.
 
         :param titulo: titulo do documento.
         :param secoes: lista de secoes. Cada secao e um dicionario com:
             heading, paragrafos (opcional, lista), bullets (opcional, lista),
-            tabela (opcional, lista de listas).
+            tabela (opcional, lista de listas), imagem (opcional, 'IMAGEM_1').
         :param marca: aplica a identidade visual da Nidum (padrao True).
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
+            ordem dos marcadores IMAGEM_1, IMAGEM_2...
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._pdf(titulo, secoes, marca, __user__, ecossistema, versao)
+            return await self._pdf(titulo, secoes, marca, __user__, ecossistema,
+                                   versao, imagens)
         except Exception:
             return _erro_limpo("gerar_pdf")
 
     async def gerar_html(
         self, titulo: str, html: str, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera um arquivo HTML (.html) e devolve um link de download.
 
@@ -920,6 +1122,8 @@ class Tools:
         :param html: documento HTML completo (string), pronto para abrir no navegador.
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO. O modelo posiciona o marcador
+            (IMAGEM_1) no HTML e aqui ele vira a imagem embutida em base64.
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
@@ -934,9 +1138,14 @@ class Tools:
             nome = _nome_padrao(titulo, ecossistema, "html", versao,
                                 self.valves.ECOSSISTEMA_PADRAO)
             com_editor = self.valves.EDITOR_HTML
+            imgs = _normalizar_imagens(imagens)
 
             def _montar():
                 c = conteudo
+                # Marcadores -> imagens reais ANTES de embrulhar/injetar marca, para a
+                # imagem entrar no corpo do documento como qualquer outro conteudo.
+                if imgs:
+                    c = _inserir_imagens_html(c, imgs)
                 # Se vier so um fragmento, embrulha num documento HTML minimo. O titulo e
                 # ESCAPADO: '<' ou '&' no titulo quebrariam a tag <title> (bug 2.5).
                 if "<html" not in c.lower():
@@ -963,21 +1172,22 @@ class Tools:
 
     async def gerar_apresentacao_html(
         self, titulo: str, slides: list, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera uma APRESENTACAO em HTML navegavel (deck) com a identidade Nidum.
 
         Deck autocontido: 1 slide por vez, navegacao por setas/teclado/dots,
         cantos arredondados, transicoes, contraste correto e fonte embutida.
         :param slides: mesma estrutura do gerar_pptx (lista de slides com tipo,
-            titulo, subtitulo, texto, bullets, cor, itens).
+            titulo, subtitulo, texto, bullets, cor, itens, imagem).
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO, na ordem dos marcadores.
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
             return await self._apresentacao_html(
-                titulo, slides, __user__, ecossistema, versao
+                titulo, slides, __user__, ecossistema, versao, imagens
             )
         except Exception:
             return _erro_limpo("gerar_apresentacao_html")
@@ -988,11 +1198,12 @@ class Tools:
     # event loop do Open WebUI (um render grande congelava todos os usuarios).
     # ------------------------------------------------------------------
     async def _apresentacao_html(self, titulo, slides, __user__,
-                                 ecossistema="", versao=1):
+                                 ecossistema="", versao=1, imagens=None):
         raw = slides
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_apresentacao_html", "slides", raw)
+        imgs = _normalizar_imagens(imagens)
 
         # Nome ANTES da montagem (o editor precisa dele para o download).
         nome = _nome_padrao(titulo, ecossistema, "html", versao,
@@ -1028,10 +1239,30 @@ class Tools:
                         s, tipo, mapa, cores_secao, cores_cartao, sec, logo_t, logo_a
                     )
                 )
+                # Imagem do usuario: slide PROPRIO logo apos, igual ao pptx (os layouts
+                # do deck sao composicoes fechadas; a foto em slide proprio aparece
+                # grande e nao briga com o texto). object-fit:contain = nunca distorce.
+                img_s = _imagem_do_item(imgs, s)
+                if img_s is not None:
+                    uri = _img_data_uri(img_s)
+                    if uri:
+                        leg = _esc(s.get("titulo"))
+                        partes.append(
+                            "<section class='slide'>"
+                            + (("<h2>" + leg + "</h2>") if leg else "")
+                            + "<img src='" + uri + "' alt='' style='display:block;"
+                            "margin:18px auto 0;max-width:88%;max-height:66vh;"
+                            "width:auto;height:auto;object-fit:contain;"
+                            "border-radius:12px'>"
+                            + (("<img class='logo' src='" + logo_t + "'>")
+                               if logo_t else "")
+                            + "</section>"
+                        )
             deck = "".join(partes)
+            # Os dots contam os slides RENDERIZADOS (as imagens acrescentam slides).
             dots = "".join(
                 "<span class='dot' onclick='go(" + str(k) + ")'></span>"
-                for k in range(len(slides))
+                for k in range(len(partes))
             )
             nav = (
                 "<div class='nav'><button onclick='go(i-1)'>&#8249;</button>"
@@ -1057,11 +1288,12 @@ class Tools:
         return "Arquivo gerado com sucesso. Link para download: " + link
 
     async def _pptx(self, titulo, slides, marca, __user__,
-                    ecossistema="", versao=1):
+                    ecossistema="", versao=1, imagens=None):
         raw_slides = slides
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_pptx", "slides", raw_slides)
+        imgs = _normalizar_imagens(imagens)
 
         def _montar():
             from pptx import Presentation
@@ -1172,6 +1404,42 @@ class Tools:
 
             def cor_de(nome, padrao):
                 return mapa_cor.get(str(nome).lower(), padrao) if nome else padrao
+
+            def add_slide_imagem(img, legenda):
+                # A imagem do usuario ganha o PROPRIO slide, logo apos o slide que a
+                # posicionou. Motivo: os layouts (capa, cartoes, numerada, destaque...)
+                # sao composicoes fechadas - encaixar uma foto dentro deles colidiria com
+                # texto e quebraria a regua de marca. Em slide proprio a imagem aparece
+                # grande, centralizada, com margem, e o deck continua limpo.
+                sl = prs.slides.add_slide(blank)
+                if marca:
+                    add_fundo(sl, creme)
+                if legenda:
+                    tfl = add_caixa(sl, Inches(0.9), Inches(0.45), Inches(11.5),
+                                    Inches(0.8))
+                    pl = tfl.paragraphs[0]
+                    pl.text = str(legenda)
+                    estilo(pl, 18, verde if marca else preto, bold=True,
+                           align=PP_ALIGN.CENTER)
+                topo = Inches(1.35) if legenda else Inches(0.8)
+                caixa_w = SW - Inches(2.0)
+                caixa_h = Inches(6.3) - topo
+                try:
+                    # add_picture sem width/height entra no TAMANHO NATIVO; dai medimos e
+                    # reescalamos com fator unico (nunca distorce).
+                    pic = sl.shapes.add_picture(io.BytesIO(img["bytes"]), 0, topo)
+                    w, h = _encaixar(pic.width, pic.height, caixa_w, caixa_h)
+                    pic.width = int(w)
+                    pic.height = int(h)
+                    pic.left = int((SW - pic.width) / 2)
+                    pic.top = int(topo + (caixa_h - pic.height) / 2)
+                except Exception:
+                    log.exception(
+                        "gerador_nidum: falha ao inserir imagem do usuario no pptx"
+                    )
+                    return
+                if marca:
+                    add_logo(sl, "terracota", Inches(11.1), Inches(6.8), Inches(1.6))
 
             for s in slides:
                 tipo = (s.get("tipo") or "conteudo").lower()
@@ -1376,6 +1644,11 @@ class Tools:
                     if marca:
                         add_logo(slide, "terracota", Inches(11.1), Inches(6.8), Inches(1.6))
 
+                # Imagem que o usuario anexou e o modelo posicionou NESTE slide.
+                img_s = _imagem_do_item(imgs, s)
+                if img_s is not None:
+                    add_slide_imagem(img_s, s.get("titulo") or "")
+
             buf = io.BytesIO()
             prs.save(buf)
             return buf.getvalue()
@@ -1477,11 +1750,12 @@ class Tools:
         return "Arquivo gerado com sucesso. Link para download: " + link
 
     async def _docx(self, titulo, secoes, marca, __user__,
-                    ecossistema="", versao=1):
+                    ecossistema="", versao=1, imagens=None):
         raw_secoes = secoes
         secoes = _itens_loose(secoes, _texto_para_secao)
         if not secoes:
             return _diag_entrada_vazia("gerar_docx", "secoes", raw_secoes)
+        imgs = _normalizar_imagens(imagens)
 
         def _montar():
             from docx import Document
@@ -1532,6 +1806,26 @@ class Tools:
                 except Exception:
                     log.exception("gerador_nidum: falha ao aplicar estilos docx")
 
+            def _imagem_par(img):
+                # Imagem do usuario, centralizada, dentro da largura util da pagina.
+                # add_picture com SO a largura ja preserva a proporcao (o python-docx
+                # calcula a altura); depois conferimos a altura e, se estourar, reduzimos
+                # os DOIS lados pelo mesmo fator - a forma nunca muda.
+                LARG_MAX = Inches(5.9)    # A4 menos as margens padrao
+                ALT_MAX = Inches(6.5)
+                try:
+                    par = doc.add_paragraph()
+                    par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = par.add_run()
+                    pic = run.add_picture(io.BytesIO(img["bytes"]))
+                    w, h = _encaixar(pic.width, pic.height, LARG_MAX, ALT_MAX)
+                    pic.width = int(w)
+                    pic.height = int(h)
+                except Exception:
+                    log.exception(
+                        "gerador_nidum: falha ao inserir imagem do usuario no docx"
+                    )
+
             if marca:
                 _logo_par("terracota")   # logo de ABERTURA (topo)
 
@@ -1559,6 +1853,9 @@ class Tools:
                     for run in pb.runs:
                         run.font.name = NIDUM_FONT
                         run.font.color.rgb = ink
+                img_s = _imagem_do_item(imgs, sec)
+                if img_s is not None:
+                    _imagem_par(img_s)
 
             if marca:
                 _logo_par("terracota")   # logo de ENCERRAMENTO (fim)
@@ -1585,11 +1882,12 @@ class Tools:
         return "Arquivo gerado com sucesso. Link para download: " + link
 
     async def _pdf(self, titulo, secoes, marca, __user__,
-                   ecossistema="", versao=1):
+                   ecossistema="", versao=1, imagens=None):
         raw_secoes = secoes
         secoes = _itens_loose(secoes, _texto_para_secao)
         if not secoes:
             return _diag_entrada_vazia("gerar_pdf", "secoes", raw_secoes)
+        imgs = _normalizar_imagens(imagens)
 
         def _montar():
             from reportlab.lib.pagesizes import A4
@@ -1729,6 +2027,28 @@ class Tools:
                     items = [ListItem(Paragraph(str(b), st_body)) for b in bullets]
                     flow.append(ListFlowable(items, bulletType="bullet"))
                     flow.append(Spacer(1, 2 * mm))
+                img_s = _imagem_do_item(imgs, sec)
+                if img_s is not None:
+                    # ImageReader da o tamanho NATIVO em pixels; _encaixar converte para
+                    # pontos com fator unico. WEBP depende de PIL com suporte a webp - se
+                    # a lib nao aceitar, cai no except, loga e o PDF sai SEM a imagem.
+                    try:
+                        from reportlab.lib.utils import ImageReader
+
+                        ir = ImageReader(io.BytesIO(img_s["bytes"]))
+                        nat_w, nat_h = ir.getSize()
+                        larg_util = docp.width
+                        w, h = _encaixar(nat_w, nat_h, larg_util, 150 * mm)
+                        flow.append(Spacer(1, 3 * mm))
+                        flow.append(
+                            Image(io.BytesIO(img_s["bytes"]), width=w, height=h,
+                                  hAlign="CENTER")
+                        )
+                        flow.append(Spacer(1, 4 * mm))
+                    except Exception:
+                        log.exception(
+                            "gerador_nidum: falha ao inserir imagem do usuario no pdf"
+                        )
                 tabela = sec.get("tabela")
                 if tabela:
                     tabela = [_lista(r) for r in _lista(tabela)]
