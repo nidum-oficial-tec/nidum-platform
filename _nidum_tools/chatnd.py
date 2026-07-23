@@ -1,9 +1,44 @@
 """
 title: ChatND
 author: Nidum
-version: 1.44.0
+version: 1.45.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.45.0:
+    - FALHAR EM VOZ ALTA (Fatia 2 - o cinto de seguranca da 1.44.0). Sobe JUNTO com ela:
+      a 1.44.0 sozinha faria o documento inteiro entrar no contexto sem rede.
+    - FALHA PARCIAL (furo achado na propria 1.44.0): anexo SEM texto extraido era pulado
+      em SILENCIO - com 3 arquivos e um ilegivel, o pipe usaria 2 e nao diria nada. Mesma
+      familia da falha muda que este conserto ataca. Agora: _anexos_recentes devolve os
+      ilegiveis com legivel=False; se ALGUM falhou, a resposta diz o nome e o que foi
+      usado; se NENHUM deu para ler, RECUSA e explica (PDF digitalizado, arquivo ainda em
+      processamento) em vez de improvisar o conteudo.
+    - IMAGEM NAO E "ANEXO ILEGIVEL" (_eh_imagem, por mime E extensao): ela tem canal
+      proprio (marcadores IMAGEM_N, 1.43.0). Sem esta distincao, toda imagem anexada
+      geraria um aviso falso de falha.
+    - MENSAGEM DE ESTOURO COMPLETA: alem do tamanho de CADA arquivo, informa o total, o
+      limite, quanto excede e EM QUANTAS PARTES o material caberia (_cortar_em_blocos).
+    - CORTE EM BLOCOS - CAMADA 1 (_cortar_em_blocos): divide por FRONTEIRA DE ESTRUTURA
+      (paragrafo > linha > fim de frase), NUNCA partindo frase. Investigado antes de
+      escolher: o container instala unstructured==0.18.31 (backend/requirements.txt), logo
+      o PPTX usa UnstructuredPowerPointLoader e NAO o fallback PptxLoader que emitiria
+      "Slide N:"; o DOCX usa Docx2txtLoader (texto plano). Ou seja, a extracao vem PLANA -
+      por isso o corte se apoia em paragrafo, e aproveita "Slide N:" quando existir.
+      Ler os bytes com python-pptx/python-docx daria estrutura real, mas reabriria a
+      superficie de Files/Storage que evitamos de proposito: registrado como futuro, nao
+      construido (segmentacao e caminho RARO - ver a medicao no custo da 1.44.0).
+    - ACERVO REDUZIDO COM ANEXO (valve MAX_CHARS_ACERVO_COM_ANEXO, default 45000): furo da
+      1.44.0 - o ramo "transformar + citar o canon" somava 150k de anexo aos 200k do
+      MAX_CHARS_TOTAL. Truncar TRECHOS e coerente (ja sao selecao); truncar o ANEXO nao
+      seria - por isso um PARA E AVISA e o outro corta. Pior caso combinado agora LIMITADO:
+      ~150k + 45k + prompt.
+    - TETO CONFIRMADO EM 150000, nao chutado: o caso real ocupa 32-38%. Criterio - pior
+      caso combinado ~201k chars (anexo 150k + acervo 45k + GERADOR ~4k + pedido) = ~50-57k
+      tokens, folgado para o GERADOR. O risco que sobra nao e a ENTRADA e sim a saida (JSON
+      completo), ja coberto pelo reforco de 2 tentativas e pela regra ESCOPO POR ARQUIVO.
+    - LOG DE DECISAO: toda geracao registra "COM anexo (N chars de M arquivo(s))" ou "SEM
+      anexo", mais se o acervo entrou. Sem isso nao da para saber, depois do fato, se a
+      geracao usou o material do usuario.
   1.44.0:
     - SEPARAR CONSULTAR DE TRANSFORMAR (Fatia 1). Sintoma real: 3 PPTX anexados +
       "mantenha o conteudo original, refaca o design" -> deck novo com o conteudo TROCADO.
@@ -37,13 +72,17 @@ changelog:
       rodava, porque "refaca isto mantendo o conteudo" nao tem substantivo de arquivo e
       caia em 'documentos' (a trava 4 exige verbo + substantivo). Exige DOIS sinais: a
       intencao E um anexo com texto no turno.
-    - CUSTO (explicito, para nao haver susto na conta): "substitui, nao soma" e verdade -
-      o anexo ENTRA NO LUGAR dos ~45k do acervo, nao alem deles. Mas o teto do anexo e
-      maior que o do acervo: documento MEDIO fica igual ou MENOS que hoje; documento
-      GRANDE sobe, no pior caso ~3x (45k de acervo -> ate 150k de anexo). Isso e INERENTE:
-      nao da para preservar conteudo que nao foi enviado ao modelo. Aceito conscientemente;
-      a alternativa (mandar menos) e exatamente o bug que este conserto ataca. O gasto e
-      por ARQUIVO GERADO, nao por turno de conversa.
+    - CUSTO (com numero real, medido nos 3 PPTX do caso original): "substitui, nao soma" -
+      o anexo ENTRA NO LUGAR dos ~45k do acervo, nao alem deles. NO CASO TIPICO O CUSTO
+      EMPATA: os 3 arquivos do incidente (39,9 MB, 60 slides) dao ~48k-57k chars de texto,
+      praticamente o mesmo que os ~45k de acervo que hoje se paga em TODA geracao - e o
+      sistema passa a fazer algo que antes nao fazia. O pior caso e LIMITADO PELO TETO
+      (150k), nao ilimitado. Nao e "ate 3x no uso normal": e empate no tipico, com teto no
+      extremo. O gasto e por ARQUIVO GERADO, nao por turno de conversa.
+    - TAMANHO DE ARQUIVO NAO E TAMANHO DE TEXTO (medido): o PPTX de 38,3 MB do caso real
+      tem 13.487 chars de texto - 94% dele e MIDIA. Densidade observada ~795-940 chars/
+      slide; para estourar 150k seria preciso um deck de ~160-190 slides. Por isso o teto
+      sobreviveu ao teste de realidade: o caso real ocupa 32-38% dele.
     - PEDIDO LIMPO SEM REGEX: para nao pagar chunks + inteiro, o texto do usuario vem de
       metadata['user_prompt'] - que o OWUI salva ANTES da injecao (middleware.py:2901;
       comentario de la: "restore to the true original"). Recortar as <source> com regex
@@ -1332,17 +1371,72 @@ def _anexos_recentes(body, messages=None, n=5):
         if str(it.get("type") or "file") != "file":
             continue          # pasta/colecao: nao e anexo do turno
         arq = it.get("file") if isinstance(it.get("file"), dict) else {}
-        conteudo = ((arq.get("data") or {}).get("content") or "")
-        if not isinstance(conteudo, str) or not conteudo.strip():
-            continue          # sem texto extraido (ex.: imagem) - outro canal cuida
         nome = (
             it.get("name")
             or (arq.get("meta") or {}).get("name")
             or arq.get("filename")
             or "anexo"
         )
-        saida.append({"nome": str(nome), "conteudo": conteudo, "chars": len(conteudo)})
+        if _eh_imagem(arq, nome):
+            continue          # imagem tem canal proprio (marcadores IMAGEM_N)
+        conteudo = ((arq.get("data") or {}).get("content") or "")
+        if not isinstance(conteudo, str):
+            conteudo = ""
+        # ILEGIVEL nao e descartado: entra com legivel=False para ser RELATADO. Sumir
+        # com um anexo que o usuario anexou (PDF escaneado sem OCR, arquivo ainda em
+        # processamento) e a mesma falha muda que este conserto ataca.
+        saida.append({
+            "nome": str(nome),
+            "conteudo": conteudo,
+            "chars": len(conteudo),
+            "legivel": bool(conteudo.strip()),
+        })
     return saida
+
+
+def _eh_imagem(arq, nome):
+    # Anexo de IMAGEM nao entra no canal de texto (tem o seu, por marcadores) e tambem
+    # NAO pode ser relatado como "ilegivel" - nao houve falha nenhuma.
+    mime = str(((arq.get("meta") or {}).get("content_type") or "")).lower()
+    if mime.startswith("image/"):
+        return True
+    return str(nome or "").lower().endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
+    )
+
+
+def _cortar_em_blocos(texto, teto):
+    # Camada 1 do corte: divide em blocos de ate 'teto' chars SEM PARTIR FRASE.
+    # Preferencia de fronteira, da mais forte para a mais fraca:
+    #   1. paragrafo (linha em branco) - inclui o "Slide N:" quando o loader o emite
+    #   2. quebra de linha
+    #   3. fim de frase (. ! ? seguido de espaco)
+    # So corta no meio de uma frase se UMA frase sozinha ja passar do teto (patologico).
+    # PREPARACAO: hoje serve para dizer ao usuario em QUANTOS blocos o material caberia;
+    # a orquestracao de N geracoes num arquivo so e trabalho futuro (decisao: opcao B).
+    texto = texto or ""
+    if teto <= 0 or len(texto) <= teto:
+        return [texto] if texto else []
+    blocos = []
+    resto = texto
+    while len(resto) > teto:
+        janela = resto[:teto]
+        corte = -1
+        for padrao in ("\n\n", "\n"):
+            corte = janela.rfind(padrao)
+            if corte > 0:
+                corte += len(padrao)
+                break
+        if corte <= 0:
+            m = None
+            for m in re.finditer(r"[.!?]\s", janela):
+                pass          # guarda a ULTIMA ocorrencia
+            corte = m.end() if m else teto
+        blocos.append(resto[:corte].strip())
+        resto = resto[corte:]
+    if resto.strip():
+        blocos.append(resto.strip())
+    return [b for b in blocos if b]
 
 
 def _texto_usuario_limpo(body, fallback=""):
@@ -1926,6 +2020,12 @@ class Pipe:
         # silencio seria reintroduzir, pela porta dos fundos, o proprio bug que este
         # conserto ataca: arquivo que parece certo, com conteudo faltando sem aviso.
         MAX_CHARS_ANEXO: int = Field(default=150000)
+        # ACERVO QUANDO HA ANEXO (1.45.0): com um original a preservar, o acervo e
+        # TEMPERO, nao fonte principal - entra so quando o pedido cita o canon. Sem este
+        # teto proprio, o ramo "transformar + citar o canon" somaria 150k de anexo aos
+        # 200k do MAX_CHARS_TOTAL. Cortar TRECHOS e coerente (ja sao uma selecao); cortar
+        # o ANEXO nao seria (por isso aquele PARA E AVISA em vez de truncar).
+        MAX_CHARS_ACERVO_COM_ANEXO: int = Field(default=45000)
         MOSTRAR_ROTA: bool = Field(default=False)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
@@ -2985,21 +3085,46 @@ class Pipe:
                         len(imagens_anexo),
                     )
                 # CANAL 'TRANSFORMAR' (1.44.0): o anexo do usuario, INTEIRO.
-                anexos = _anexos_recentes(body)
+                todos = _anexos_recentes(body)
+                anexos = [a for a in todos if a["legivel"]]
+                ilegiveis = [a for a in todos if not a["legivel"]]
+                aviso_ilegiveis = ""
                 original = ""
+                # FALHA PARCIAL (1.45.0): anexo que veio sem texto extraido e RELATADO,
+                # nunca pulado em silencio. Se NENHUM deu para ler, nao improvisa: recusa.
+                if ilegiveis:
+                    nomes = ", ".join(a["nome"] for a in ilegiveis)
+                    log.warning(
+                        "chatnd: %d anexo(s) SEM texto extraido: %s", len(ilegiveis), nomes
+                    )
+                    if not anexos:
+                        return (
+                            "Nao consegui LER o material que voce anexou (" + nomes + "), "
+                            "entao nao vou gerar o arquivo - inventar o conteudo seria "
+                            "pior que avisar.\n\n"
+                            "Isso costuma acontecer com PDF digitalizado (imagem sem "
+                            "texto) ou com arquivo ainda em processamento. Tente reenviar, "
+                            "ou me mande o conteudo em texto que eu monto o arquivo."
+                        )
+                    aviso_ilegiveis = (
+                        "\n\n---\nAviso: nao consegui ler " + nomes + " (sem texto "
+                        "extraivel), entao esse material NAO entrou no arquivo. Usei "
+                        "apenas: " + ", ".join(a["nome"] for a in anexos) + "."
+                    )
                 if anexos:
                     soma = sum(a["chars"] for a in anexos)
                     teto = self.valves.MAX_CHARS_ANEXO
                     # TRAVA DURA: nao coube -> PARA E AVISA com os tamanhos. Nunca trunca
                     # (truncar aqui recriaria o bug: arquivo plausivel, conteudo faltando
-                    # em silencio). A mensagem boa (segmentacao) vem na fatia 2.
+                    # em silencio).
                     if soma > teto:
                         detalhe = "; ".join(
                             "%s: %d chars" % (a["nome"], a["chars"]) for a in anexos
                         )
+                        n_blocos = len(_cortar_em_blocos(_bloco_original(anexos), teto))
                         log.warning(
-                            "chatnd: anexo NAO coube -> %d chars (teto %d) | %s",
-                            soma, teto, detalhe,
+                            "chatnd: anexo NAO coube -> %d chars (teto %d, %d bloco(s)) | %s",
+                            soma, teto, n_blocos, detalhe,
                         )
                         return (
                             "Nao vou gerar este arquivo porque o material anexado nao "
@@ -3007,10 +3132,13 @@ class Pipe:
                             "entregar um arquivo com parte do conteudo faltando sem voce "
                             "saber.\n\n"
                             "Anexado: " + detalhe + ".\n"
-                            "Limite atual: " + str(teto) + " chars.\n\n"
-                            "Peca um arquivo por vez (ou uma parte por vez) que eu "
-                            "processo mantendo o conteudo. A divisao automatica em blocos "
-                            "chega na proxima versao."
+                            "Total: " + str(soma) + " chars | limite: " + str(teto)
+                            + " chars (excede em " + str(soma - teto) + ").\n\n"
+                            "Seu material caberia em " + str(n_blocos) + " parte(s). "
+                            "Peca uma por vez (ou um arquivo por vez) que eu processo "
+                            "mantendo o conteudo. A divisao automatica num arquivo so "
+                            "ainda nao existe - quando existir, eu monto tudo de uma vez."
+                            + aviso_ilegiveis
                         )
                     original = _bloco_original(anexos)
                     # Texto do usuario SEM as <source> que o OWUI colou (metadata.
@@ -3049,15 +3177,36 @@ class Pipe:
                             "chatnd: falha ao montar contexto RAG (rota arquivo)"
                         )
                         contexto = ""
+                    # ACERVO REDUZIDO quando ha anexo: com um original a preservar, o
+                    # acervo e tempero. Cortar TRECHOS e coerente (ja sao selecao) - e o
+                    # oposto do anexo, que nunca se trunca.
+                    if contexto and anexos:
+                        teto_ac = self.valves.MAX_CHARS_ACERVO_COM_ANEXO
+                        if len(contexto) > teto_ac:
+                            log.info(
+                                "chatnd: acervo REDUZIDO com anexo -> %d chars (de %d)",
+                                teto_ac, len(contexto),
+                            )
+                            contexto = contexto[:teto_ac]
                     if contexto:
                         msgs = self._injetar_contexto_arquivo(msgs, contexto)
                 elif anexos:
                     log.info(
                         "chatnd: acervo PULADO (anexo e a fonte; pedido nao cita o canon)"
                     )
-                return await self._gerar_arquivo(
+                # LOG DE DECISAO: com ou sem anexo, sempre registrado - sem isso nao da
+                # para saber, depois do fato, se a geracao usou o material do usuario.
+                log.info(
+                    "chatnd: GERANDO %s | acervo: %s",
+                    ("COM anexo (%d chars de %d arquivo(s))"
+                     % (sum(a["chars"] for a in anexos), len(anexos))) if anexos
+                    else "SEM anexo",
+                    "sim" if (texto and usar_acervo) else "nao",
+                )
+                saida_arq = await self._gerar_arquivo(
                     __request__, user, msgs, __user__, imagens_anexo, original
                 )
+                return (saida_arq or "") + aviso_ilegiveis
             except Exception as e:
                 log.exception("chatnd: falha na rota de arquivo")
                 return "Falha ao gerar o arquivo: " + str(e)
