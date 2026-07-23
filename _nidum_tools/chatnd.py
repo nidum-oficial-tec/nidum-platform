@@ -37,6 +37,13 @@ changelog:
       rodava, porque "refaca isto mantendo o conteudo" nao tem substantivo de arquivo e
       caia em 'documentos' (a trava 4 exige verbo + substantivo). Exige DOIS sinais: a
       intencao E um anexo com texto no turno.
+    - CUSTO (explicito, para nao haver susto na conta): "substitui, nao soma" e verdade -
+      o anexo ENTRA NO LUGAR dos ~45k do acervo, nao alem deles. Mas o teto do anexo e
+      maior que o do acervo: documento MEDIO fica igual ou MENOS que hoje; documento
+      GRANDE sobe, no pior caso ~3x (45k de acervo -> ate 150k de anexo). Isso e INERENTE:
+      nao da para preservar conteudo que nao foi enviado ao modelo. Aceito conscientemente;
+      a alternativa (mandar menos) e exatamente o bug que este conserto ataca. O gasto e
+      por ARQUIVO GERADO, nao por turno de conversa.
     - PEDIDO LIMPO SEM REGEX: para nao pagar chunks + inteiro, o texto do usuario vem de
       metadata['user_prompt'] - que o OWUI salva ANTES da injecao (middleware.py:2901;
       comentario de la: "restore to the true original"). Recortar as <source> com regex
