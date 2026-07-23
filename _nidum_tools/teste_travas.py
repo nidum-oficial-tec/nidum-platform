@@ -190,6 +190,11 @@ def main():
     # trouxe cidade errada para "populacao de Americana"). Sem o aviso, o modelo repetiria
     # um numero errado com a confianca de um certo.
     ok &= check("abre com aviso 'apoio, nao verdade'", "apoio, nao verdade" in ctx)
+    # A regra de RECENCIA (1.38.0), nascida do caso Santos: pergunta sobre o AGORA sem
+    # data confirmada -> nao afirmar o fato volatil especifico. Rede para quando a data
+    # nao aparece - onde "avise se estiver velho" falha.
+    ok &= check("instrui sobre pergunta SOBRE O AGORA (recencia)", "SOBRE O AGORA" in ctx)
+    ok &= check("manda NAO afirmar o dado especifico sem data", "NAO afirme o dado especifico" in ctx)
     ok &= check("aceita SearchResult (objeto)", "Americana - Wikipedia" in ctx)
     ok &= check("aceita dict tambem (blindagem de versao)", "Site de CEP" in ctx)
     ok &= check("cita o link, para o usuario conferir", "http://wiki/x" in ctx)
@@ -202,9 +207,44 @@ def main():
     ok &= check("None nos campos nao explode (_campo devolve '')",
                 isinstance(C._montar_contexto_web([_SR(None, None, None)], 3), str))
 
+    print("== TRAVA 4: _pede_arquivo (pedido de PRODUZIR arquivo) ==")
+    # Deve virar arquivo (True): verbo de producao + substantivo de arquivo, OU
+    # substantivo de arquivo + "para baixar". Os casos exatos do pedido do dono.
+    for t in [
+        "transforme isso num arquivo html com a identidade visual da Nidum",
+        "gere o arquivo e me entregue pronto para baixar",
+        "converta em PDF",
+        "passe para HTML",
+        "vira um deck sobre isso",
+        "faca uma apresentacao sobre a fazenda",
+        "gera um PDF com a identidade da Nidum",
+        "me entrega o PDF pronto para baixar",
+        "cria uma planilha com esses numeros",
+        "exporta isso pra powerpoint",
+    ]:
+        ok &= check("PEDE ARQUIVO (True): " + t, C._pede_arquivo(t) is True)
+    # NAO pode virar arquivo (False): sem os dois sinais, ou com substantivo de acervo/
+    # imagem (que sequestraria as rotas 'documentos'/'imagem').
+    for t in [
+        "o que dizem os documentos sobre a governanca",
+        "resuma os documentos da base",
+        "faca um resumo disso",
+        "gere uma imagem de um ninho",
+        "crie um logo para a Nidum",
+        "como funciona a remuneracao na Nidum",
+        "quais os ecossistemas da Nidum",
+        "desenhe um gato",
+        "qual o proposito da Nidum",
+        "faca uma analise do mercado imobiliario",
+    ]:
+        ok &= check("NAO e arquivo (False): " + t, C._pede_arquivo(t) is False)
+    ok &= check("vazio -> False", C._pede_arquivo("") is False)
+    ok &= check("None nao explode -> False", C._pede_arquivo(None) is False)
+
     print("== AS DUAS JUNTAS: o que a fronteira resgata ==")
     # Simula a decisao do roteador SEM chamar o classificador: dado que o LLM
-    # devolveu 'geral' (o caso ruim), as travas corrigem?
+    # devolveu 'geral' (o caso ruim), as travas corrigem? A trava 4 e a UNICA que
+    # sobrescreve 'documentos' (as outras 3 so o alimentam), por isso vem por ultimo.
     def resgata(texto):
         cat = "geral"
         if cat == "geral" and C._tem_marca_temporal(texto):
@@ -213,6 +253,8 @@ def main():
             cat = "documentos"
         if cat == "geral" and C._menciona_termo_canonico(texto, V):
             cat = "documentos"
+        if cat in ("documentos", "geral") and C._pede_arquivo(texto):
+            cat = "arquivo"
         return cat
 
     ok &= check("classificador errou 'qual o proposito da Nidum?' -> resgatado p/ documentos",
@@ -236,6 +278,22 @@ def main():
                 resgata("como funciona o EGP aqui?") == "geral")
     ok &= check("conversa comum continua em geral",
                 resgata("me ajude a escrever um email de agradecimento") == "geral")
+    # O CASO DO BUG (1.40.0): "transforme isso num html com a identidade da Nidum". A
+    # mencao a 'Nidum' (trava 2) puxa para 'documentos' - e ali estava o bug: a rota
+    # despejava o HTML no chat. A trava 4 sobrescreve 'documentos' e leva para 'arquivo',
+    # onde a tool e chamada e o usuario recebe o LINK.
+    ok &= check("BUG 1.40.0 RESGATADO: 'transforme isso num arquivo html ... da Nidum' "
+                "-> arquivo (trava 2 puxa p/ documentos, trava 4 resgata)",
+                resgata("transforme isso num arquivo html com a identidade da Nidum")
+                == "arquivo")
+    ok &= check("'gere o arquivo e me entregue pronto para baixar' -> arquivo",
+                resgata("gere o arquivo e me entregue pronto para baixar") == "arquivo")
+    # A rota 'imagem' NAO e sequestrada pela trava 4: prova direta e que _pede_arquivo e
+    # False para pedido de imagem (bloco TRAVA 4 acima: 'gere uma imagem de um ninho',
+    # 'crie um logo' -> False). NAO da para provar via resgata(): ele comeca forcado em
+    # 'geral' e 'ninho' e termo canonico, entao a trava 3 o leva a 'documentos' - artefato
+    # da simulacao, nao roteamento real (no pipe o classificador manda imagem para 'imagem',
+    # que a trava 4 nem olha).
 
     print("\nRESULTADO: " + ("TODAS AS TRAVAS OK" if ok else "HOUVE FALHA NUMA TRAVA"))
     return 0 if ok else 1

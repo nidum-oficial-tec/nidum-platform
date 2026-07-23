@@ -1,9 +1,108 @@
 """
 title: ChatND
 author: Nidum
-version: 1.37.0
-description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum. Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
+version: 1.43.0
+description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.43.0:
+    - IMAGEM ANEXADA PELO USUARIO entra no arquivo gerado (capacidade NOVA, nao regressao).
+      Antes, quem anexava uma foto e pedia "poe na apresentacao" recebia um PLACEHOLDER DE
+      TEXTO: a rota de arquivo montava o prompt so com texto e nunca olhava as partes de
+      imagem da mensagem, entao o modelo nao tinha como inserir nada. Agora a rota extrai o
+      anexo (REUSA _tem_anexo_imagem/_extrair_imagens_anexo, ja usados na rota de imagem) e
+      passa as imagens a tool por argumento NOMEADO (imagens=), no padrao do ecossistema=eco.
+      Requer a tool 2.5.0 republicada junto.
+    - DESENHO (a armadilha evitada): os BYTES NUNCA vao para modelo nenhum. Ao GERADOR vai
+      so um MARCADOR por imagem (IMAGEM_1, IMAGEM_2...) e a instrucao de posiciona-los pelo
+      campo "imagem" do slide/secao; os bytes seguem do pipe direto para a tool. Uma foto em
+      base64 no prompt seria um texto enorme - estouro de contexto e o 429 recem-resolvido.
+    - CORRIGIDO DE QUEBRA: _chamar_gerador monta o payload com 'messages' CRU, entao um
+      anexo ja mandava base64 ao modelo hoje, sem que ninguem usasse a imagem para nada.
+      Novo _msgs_sem_imagem() tira as partes de imagem (e 'files') das mensagens quando ha
+      anexo - o GERADOR passa a receber so o texto. Sem anexo, o caminho e o de antes.
+    - Schema do GERADOR ganhou o campo opcional "imagem" em slides e secoes, com a regra de
+      so usa-lo quando os marcadores forem oferecidos (instrucao DINAMICA, injetada apenas
+      quando ha anexo - sem anexo o modelo nao ouve falar de marcador e nao inventa um).
+      Instrucao explicita de NAO escrever placeholders de texto tipo "[inserir imagem aqui]".
+  1.42.0:
+    - PALETA do IMAGEM_PROMPT alinhada ao brandbook oficial (MKT_BrandbookNidum V1): as
+      cores da marca que a rota de imagem oferecia quando o usuario pede 'com as cores da
+      Nidum' estavam desatualizadas (verde oliva #647260, creme #EAE6DC). Agora: terracota
+      #9A4A2E, musgo #515E52, ceu #4F7187, areia #E5E0D5, pedra #9D9890, escuro #1F1E1B -
+      os mesmos hexes que a tool 2.3.0 usa. So a orientacao textual de geracao de imagem;
+      nao muda roteamento nem travas.
+  1.41.0:
+    - NOMENCLATURA (par da tool 2.3.0): o GERADOR agora emite um campo 'ecossistema' (sigla
+      da lista fechada FONTE/REG/MKT/PROD/OPS/FIN/JUR/ACA/TEC/SUS/CC/CT/CE), escolhido pelo
+      ASSUNTO do documento. _gerar_arquivo repassa ecossistema=eco por argumento nomeado aos
+      6 metodos da tool, que montam o nome ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext. Sigla vazia/
+      invalida cai no padrao da tool - o nome NUNCA derruba a geracao. REPUBLICAR pipe+tool
+      juntos (a tool 2.3.0 precisa aceitar o argumento).
+  1.40.0:
+    - ROTEAMENTO: pedido de ARQUIVO caia em 'documentos'. Sintoma real: "transforme isso
+      num html com a identidade da Nidum" -> rota 'documentos' -> o modelo despejou ~900
+      linhas de HTML no chat (a rota responde no chat, nao chama a tool); no pedido seguinte
+      ele alucinou "nao tenho ferramenta ativa". CAUSA: o prompt do classificador nao tinha
+      (1) os formatos HTML/pagina/site e (2) a familia de verbos de TRANSFORMACAO
+      (transforme/converta/passe/vira). Verbo + formato desconhecidos + tema Nidum -> a
+      regra "na duvida, base" empurrava para 'documentos'.
+    - FIX A (prompt): categoria 'arquivo' agora inclui HTML/pagina/site e os verbos de
+      transformacao; diz que 'arquivo' VENCE 'documentos'/'geral' mesmo com o conteudo ja
+      na conversa e tema Nidum; e que nesta rota o conteudo NUNCA e escrito no chat (so o
+      LINK).
+    - FIX B (trava deterministica): _pede_arquivo - a 4a trava do roteador e a UNICA que
+      resgata PARA 'arquivo', sobrescrevendo 'documentos'/'geral' (nunca 'imagem'). Exige
+      DOIS sinais na frase (verbo de producao + substantivo de arquivo entregavel) e exclui
+      'documento(s)'/'imagem'/'logo' para nao sequestrar as rotas 'documentos'/'imagem'.
+      Roda mesmo se o classificador falha. Casos em teste_travas.py (20 casos: 10 True/10
+      False).
+  1.39.0:
+    - WEB RECENCIA (saida 2): o pipe chama o TAVILY DIRETO, para pedir os params que o
+      wrapper do OWUI nao pede. O tavily.py do OWUI manda so {query, max_results} - e e
+      100% UPSTREAM (patchear = conflito em todo rebase, dividida do editorial). E ele nao
+      SABE a intencao da pergunta; recencia por-pergunta exige atravessar 2 arquivos
+      upstream. So o pipe tem a pergunta + o veredito do classificador. Por isso Saida 2,
+      nao patch (Saida 1).
+    - NAO e o encapsulamento da Anthropic: o Tavily e FERRAMENTA (um POST com JSON), nao o
+      provedor do modelo. _tavily_buscar sao ~30 linhas nossas, aiohttp, devolve o mesmo
+      formato que _montar_contexto_web ja consome.
+    - '| recente' pelo CLASSIFICADOR (juiz, nao regex - a licao do 'quando'): mesmo
+      mecanismo do '| triade', mesmo parsing ('recente' in saida). Vies "na duvida,
+      marque recente" - falso positivo faz a busca priorizar o novo (barato); falso
+      negativo entrega dado velho como atual (a dor). E o "na duvida, base" no outro eixo.
+    - ECONOMIA (ponto do Davi): search_depth='advanced' custa 2 creditos (basico=1) no
+      free tier de 1.000/mes. Advanced/topic/days SO quando 'recente' - o atemporal
+      ('quem foi Getulio Vargas') fica no basico e preserva a folga.
+    - FALLBACK: se WEB_TAVILY_DIRETO=off OU a TAVILY_API_KEY falta, cai no search_web
+      (engine do dropdown). Nunca fica sem web por config.
+    - PARAMS PROVISORIOS - saem da SONDA, nao de memoria: WEB_RECENTE_DAYS (janela),
+      WEB_RECENTE_TOPIC (news ajuda jogo, pode atrapalhar cotacao), WEB_RECENTE_RAW
+      (pagina inteira vs snippet), WEB_MAX_RESULTADOS. A sonda 3 mede no par Santos/dolar
+      antes de fixar. Diario registra: a rota geral estava recebendo 693-2726 chars
+      (contra ~44k da institucional) - migalha.
+    - LOG NAO ESTAVA CEGO: era o filtro do Railway do Davi (buscava 'web ->'; achou com
+      'chatnd: web'). Item do "log cego" MORTO - nao era versao nem Railway, era a busca.
+      O fail-loud da 1.38.0 fica como REFORCO (WARNING no vazio vale por si), nao conserto.
+  1.38.0:
+    - WEB (rota geral): reforca a instrucao de RECENCIA e torna o log FAIL-LOUD. Nao
+      troca a engine - isso e decisao de painel (ver sonda de recencia).
+    - A INSTRUCAO (A) foi reforcada por uma falha REAL (18/07): "quem ganhou o jogo do
+      Santos ontem?" -> o DDGS devolveu um jogo ANTIGO (Santos x Bahia; o de ontem foi
+      contra o Botafogo) e o modelo, mesmo RESSALVANDO, afirmou o adversario errado.
+      Licao: ressalva de honestidade NAO salva quando a fonte nao traz data e o modelo
+      apresenta o fato volatil especifico. O aviso antigo ("apoio, nao verdade; cite a
+      fonte") nao bastava. Novo: pergunta SOBRE O AGORA (placar de ontem, cotacao de hoje,
+      noticia) -> NAO afirmar o dado especifico (adversario/placar/numero) sem uma DATA que
+      confirme; senao, dizer que nao confirmou o atual e apontar a fonte.
+    - ISTO E REDE, NAO CONSERTO, e o changelog diz isso: a raiz e a engine. O DDGS nao
+      prioriza recencia; so 2 de 28 engines do fork (bocha, searxng) passam param de
+      recencia pelo wrapper do OWUI - os outros dependem do padrao da engine. A troca fica
+      para depois da sonda de recencia medir a engine CERTA.
+    - FAIL-LOUD no _contexto_web: loga ANTES da busca (aparece mesmo se a engine travar) e
+      o VAZIO vira WARNING (rate-limit tem que gritar). Motivo: se a rota geral parar de
+      achar resultado, a resposta continua parecendo boa e o buraco fica invisivel - a
+      familia do "0 orfaos". (E investigado: o log cego atual e o pipe publicado != main;
+      republicar a 1.38.0 traz o log de volta e o fail-loud blinda contra recaida.)
   1.37.0:
     - TRAVA TEMPORAL: 'quando' SAI do gatilho + detector de data unificado. Dois commits
       separados (bisect): (1) um detector so; (2) tira o 'quando'.
@@ -585,12 +684,19 @@ CLASSIFICADOR = (
     "ilustracao, logo, icone, foto, arte ou wallpaper (texto-para-imagem). Ex.: "
     "'gere uma imagem de um ninho', 'crie um logo', 'desenhe um gato'. NAO confundir "
     "com perguntas sobre uma imagem JA enviada/anexada.\n"
-    "arquivo: pedidos para GERAR, CRIAR, MONTAR, FAZER, PREPARAR ou BAIXAR um "
-    "arquivo ou documento entregavel - apresentacao, slides, deck, PPT, PowerPoint, "
-    "Excel, planilha, Word, DOCX, relatorio ou PDF (NAO inclui imagens/figuras). "
-    "Ex.: 'faca uma apresentacao sobre X', 'monte um relatorio', 'gere um PDF', "
-    "'crie um deck'. Vale MESMO que o tema seja a Nidum: se o usuario pede para "
-    "PRODUZIR um arquivo/apresentacao/relatorio, e 'arquivo', nunca 'documentos'.\n"
+    "arquivo: pedidos para GERAR, CRIAR, MONTAR, FAZER, PREPARAR, BAIXAR ou "
+    "TRANSFORMAR/CONVERTER algo num arquivo ou documento entregavel - apresentacao, "
+    "slides, deck, PPT, PowerPoint, Excel, planilha, Word, DOCX, relatorio, PDF, "
+    "HTML, pagina web ou site (NAO inclui imagens/figuras). Verbos: alem de gerar/"
+    "criar/montar/fazer/preparar/baixar, tambem TRANSFORME, CONVERTA, PASSE PARA, "
+    "VIRA (ex.: 'transforme ISSO num HTML com a identidade da Nidum', 'converta em "
+    "PDF', 'passe para HTML', 'vira um deck sobre isso', 'monte um relatorio', 'gere "
+    "um PDF', 'crie um deck'). "
+    "'arquivo' VENCE 'documentos' e 'geral' SEMPRE que o pedido for para PRODUZIR o "
+    "entregavel - INCLUSIVE quando (a) o conteudo a virar arquivo JA ESTA na conversa "
+    "('transforme isso num...') e (b) o tema e a Nidum. Nao existe pedido de PRODUZIR "
+    "arquivo que seja 'documentos'. NESTA rota o codigo/conteudo NUNCA e escrito no "
+    "chat - o usuario recebe so o LINK de download.\n"
     "documentos: qualquer pergunta ou follow-up que pede uma RESPOSTA no chat "
     "sobre a Nidum como organizacao - governanca, sociedade, participacao, "
     "remuneracao e distribuicao, projetos e ecossistemas, pessoas e papeis, "
@@ -631,8 +737,16 @@ CLASSIFICADOR = (
     "MOVIMENTO, RELACAO, GERACAO ou TRANSFORMACAO (ex.: 'como os ecossistemas "
     "podem interagir para gerar regeneracao num ecossistema'), acrescente ' | "
     "triade' APOS a palavra-chave. Para pedidos de INVENTARIO, DEFINICAO ou FATO "
-    "(ex.: 'quais os ecossistemas da Nidum'), NAO acrescente. Exemplos validos: "
-    "'documentos | triade', 'documentos', 'geral'."
+    "(ex.: 'quais os ecossistemas da Nidum'), NAO acrescente.\n"
+    "MARCADOR DE RECENCIA (recente) - se a categoria for 'geral' E a pergunta for sobre "
+    "o ESTADO ATUAL do mundo (cotacao/preco de hoje, placar de ontem, noticia recente, "
+    "'ultimo/atual/agora/quem ganhou/quanto esta/quem e hoje'), acrescente ' | recente' "
+    "APOS a palavra-chave. Pergunta ATEMPORAL ('quem foi Getulio Vargas', 'como funciona "
+    "um motor', 'traduza X') NAO leva. NA DUVIDA, MARQUE recente - marcar a mais so faz a "
+    "busca priorizar o novo (barato); marcar a menos entrega dado velho como atual (a dor). "
+    "Exemplos: 'geral | recente' (cotacao do dolar hoje), 'geral' (quem foi Getulio "
+    "Vargas).\n"
+    "Exemplos validos: 'documentos | triade', 'documentos', 'geral | recente', 'geral'."
 )
 
 GERADOR = (
@@ -646,15 +760,28 @@ GERADOR = (
     "{\n"
     '  "tipo": "pptx" | "xlsx" | "docx" | "pdf" | "html",\n'
     '  "titulo": "titulo do arquivo",\n'
+    '  "ecossistema": "sigla do ecossistema para a nomenclatura (ver ECOSSISTEMA abaixo)",\n'
     '  "slides": [ {"tipo":"capa|secao|conteudo|destaque|divisao|numerada|cartoes|encerramento",'
     '"titulo":"...","subtitulo":"...","texto":"...","bullets":["..."],'
-    '"cor":"verde|azul|terracota|preto","itens":[{"titulo":"...","texto":"..."}]} ],\n'
+    '"cor":"verde|azul|terracota|preto","itens":[{"titulo":"...","texto":"..."}],'
+    '"imagem":"IMAGEM_1 (opcional)"} ],\n'
     '  "planilhas": [ {"nome":"...","cabecalhos":["..."],"linhas":[["..."]]} ],\n'
-    '  "secoes": [ {"heading":"...","paragrafos":["..."],"bullets":["..."]} ],\n'
+    '  "secoes": [ {"heading":"...","paragrafos":["..."],"bullets":["..."],'
+    '"imagem":"IMAGEM_1 (opcional)"} ],\n'
     '  "html": "documento HTML completo (use SO quando tipo=html)"\n'
     "}\n"
     "Inclua apenas o campo de conteudo correspondente ao tipo (slides para pptx; "
     "planilhas para xlsx; secoes para docx/pdf; html para html).\n"
+    "O campo \"imagem\" SO existe quando o usuario anexou imagens nesta conversa - e "
+    "nesse caso as instrucoes com os marcadores disponiveis aparecem no fim deste "
+    "prompt. Sem esses marcadores, NUNCA use o campo \"imagem\".\n"
+    "ECOSSISTEMA (nomenclatura oficial do arquivo): escolha UMA sigla para 'ecossistema' "
+    "pelo ASSUNTO do documento, NAO pela area de quem pediu. Lista fechada: FONTE "
+    "(institucional/fundador), REG (regulatorio), MKT (marketing/comunicacao/marca), PROD "
+    "(produto), OPS (operacoes), FIN (financeiro), JUR (juridico), ACA (academia/formacao), "
+    "TEC (tecnologia), SUS (sustentabilidade), CC, CT, CE (comites). Na duvida entre duas, "
+    "vale o assunto do documento. Se realmente nao souber, use \"\" (o gerador aplica um "
+    "padrao) - nunca invente uma sigla fora da lista.\n"
     "IMPORTANTE: APRESENTACAO/SLIDES/DECK sempre usam o campo 'slides' (estrutura "
     "acima), nunca um HTML escrito a mao. Se o usuario quer a apresentacao em HTML, "
     "web ou navegavel, use tipo 'apresentacao' (vira um deck HTML navegavel, com "
@@ -716,9 +843,9 @@ IMAGEM_PROMPT = (
     "composicao, iluminacao e fidelidade ao pedido do usuario. Por padrao, "
     "produza uma descricao fotorrealista neutra, sem estetica corporativa. "
     "Somente se o usuario pedir explicitamente elementos da marca (por ex., "
-    "'com as cores da Nidum', 'inclua o logo'), incorpore a paleta: terracota "
-    "(#9A4A2E), verde oliva (#647260), azul aco (#4F7187) e tons creme "
-    "(#EAE6DC). "
+    "'com as cores da Nidum', 'inclua o logo'), incorpore a paleta oficial: terracota "
+    "(#9A4A2E), musgo (#515E52), ceu (#4F7187), areia (#E5E0D5), pedra (#9D9890) e "
+    "escuro (#1F1E1B). "
     "Se o pedido nao for uma solicitacao de imagem que possa ser criada a partir "
     "de texto, ou se depender de um anexo/arquivo que nao foi fornecido no texto, "
     "NAO invente uma descricao. Nesse caso responda EXATAMENTE com 'SEM_IMAGEM: ' "
@@ -1073,6 +1200,54 @@ def _extrair_imagens_anexo(m):
     return urls
 
 
+def _msgs_sem_imagem(messages):
+    # Tira as PARTES de imagem das mensagens antes de mandar ao modelo GERADOR.
+    # POR QUE: uma foto anexada viaja como data-URL base64 dentro do content; como
+    # _chamar_gerador monta o payload com 'messages' CRU, esse base64 iria inteiro no
+    # prompt - texto enorme, estouro de contexto e o 429 que acabamos de resolver. O
+    # GERADOR nao precisa dos bytes: ele so decide ONDE a imagem entra, pelo marcador.
+    # Os bytes vao do pipe direto para a tool, por parametro. Custo de token: zero.
+    limpas = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        nova = m
+        c = m.get("content")
+        if isinstance(c, list):
+            nova = dict(m)
+            nova["content"] = " ".join(
+                str(p.get("text") or "")
+                for p in c
+                if isinstance(p, dict) and str(p.get("type") or "").lower() == "text"
+            ).strip()
+        if nova.get("files"):
+            nova = dict(nova)
+            nova.pop("files", None)
+        limpas.append(nova)
+    return limpas
+
+
+def _nota_imagens(n):
+    # Instrucao dinamica: so entra quando ha anexo. Sem anexo o GERADOR nao ouve falar
+    # de imagem nenhuma (nao inventa marcador).
+    marcs = ", ".join("IMAGEM_" + str(i + 1) for i in range(n))
+    plural = "imagens" if n > 1 else "imagem"
+    return (
+        "\nIMAGENS ANEXADAS PELO USUARIO: ele anexou " + str(n) + " " + plural
+        + " nesta conversa, identificada(s) por: " + marcs + ". Se o pedido for para "
+        "que apareca(m) no arquivo, POSICIONE cada marcador no slide (ou secao) mais "
+        "adequado ao contexto, usando o campo \"imagem\". Ex.: "
+        '{"tipo":"conteudo","titulo":"...","imagem":"IMAGEM_1"}. Para tipo=html, '
+        "escreva o marcador no ponto do documento onde a imagem deve aparecer. "
+        "Use cada marcador NO MAXIMO UMA VEZ e NUNCA invente um marcador que nao "
+        "esteja na lista acima. NAO escreva placeholders de texto do tipo '[inserir "
+        "imagem aqui]', '(imagem)' ou 'imagem do usuario' - a imagem e inserida pela "
+        "ferramenta a partir do campo, e um placeholder escrito sai no arquivo final "
+        "como texto solto. Voce NAO recebe o conteudo visual da imagem: decida a "
+        "posicao pelo que o usuario disse sobre ela."
+    )
+
+
 _MARCADOR_IMAGEM = "Imagem gerada pela Nidum a partir do pedido:"
 
 
@@ -1269,6 +1444,50 @@ def _montar_contexto(sources):
     return "\n\n".join(blocos)
 
 
+async def _tavily_buscar(api_key, query, *, max_results=3, search_depth="basic",
+                         topic=None, days=None, raw_content=False, timeout=20):
+    # Chama a API do Tavily DIRETO, para pedir os params de recencia que o wrapper do OWUI
+    # (retrieval/web/tavily.py) nao pede - ele manda so {query, max_results}. NAO e o
+    # problema de encapsulamento do provedor do modelo (a Anthropic): o Tavily e uma
+    # FERRAMENTA, e isto e um POST com um JSON. Devolve list[dict] {title, link, snippet}
+    # - o mesmo formato que o _montar_contexto_web/_campo ja consomem (via getattr/dict).
+    #
+    # PARAMETRIZADO de proposito: a JANELA certa (days), se topic='news' ajuda ou atrapalha
+    # (jogo e noticia; cotacao nao e), e se raw_content vale o peso - tudo isso SAI DA
+    # SONDA, medido no par Santos/dolar, nao chutado. Aqui so o encanamento.
+    import aiohttp
+
+    payload = {"query": query, "max_results": max(1, int(max_results or 3)),
+               "search_depth": search_depth}
+    if topic:
+        payload["topic"] = topic          # 'news' restringe a artigos de noticia
+    if days:
+        payload["days"] = int(days)        # janela de recencia (so faz efeito com news)
+    if raw_content:
+        payload["include_raw_content"] = True   # texto da pagina, nao so o snippet
+    headers = {"Content-Type": "application/json",
+               "Authorization": "Bearer " + api_key}
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post("https://api.tavily.com/search", json=payload,
+                                 headers=headers,
+                                 timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+    except Exception:
+        # Deixa o CHAMADOR logar o VAZIO como WARNING (fail-loud). Web e extra: falha aqui
+        # nao derruba a conversa, o modelo segue com o proprio conhecimento.
+        log.exception("chatnd: tavily-direto falhou")
+        return []
+    out = []
+    for r in (data.get("results") or []):
+        # raw_content quando pedido (pagina inteira); senao content (snippet).
+        trecho = (r.get("raw_content") if raw_content else None) or r.get("content") or ""
+        out.append({"title": r.get("title") or "", "link": r.get("url") or "",
+                    "snippet": trecho})
+    return out
+
+
 def _campo(r, nome):
     # SearchResult (pydantic) OU dict, indiferente - a sonda 2 mostrou que vem o objeto,
     # mas aceitar dict tambem e barato e blinda contra mudanca de versao do fork.
@@ -1307,7 +1526,21 @@ def _montar_contexto_web(resultados, maximo):
         "fraca ou dado desatualizado. Use como apoio, confronte com o que voce ja sabe, "
         "e CITE a fonte (o site) quando usar um dado especifico, para o usuario poder "
         "conferir. Se os resultados forem claramente irrelevantes, responda com seu "
-        "proprio conhecimento e diga que a busca nao ajudou.\n\n"
+        "proprio conhecimento e diga que a busca nao ajudou.\n"
+        # A regra abaixo nasceu de uma falha REAL (18/07): "quem ganhou o jogo do Santos
+        # ontem?" -> o buscador devolveu um jogo ANTIGO (Santos x Bahia) e o modelo, mesmo
+        # ressalvando "nao tenho o placar exato", AFIRMOU o adversario errado. Ressalva nao
+        # salvou: ele apresentou um fato volatil especifico que a fonte nao confirmava. E o
+        # buscador NEM SEMPRE traz a data do resultado - entao "avise se estiver velho"
+        # falha quando nao ha data para ver. A defesa e NAO afirmar o especifico. Isto e
+        # rede, nao conserto: a raiz e a engine (ver diario/sonda de recencia).
+        "PERGUNTA SOBRE O AGORA (placar de ontem, cotacao ou preco de hoje, noticia "
+        "recente, 'ultimo/atual/quem ganhou/quanto esta'): trate o resultado como NAO "
+        "CONFIAVEL para o fato exato, a menos que ele traga uma DATA confirmando ser do "
+        "periodo perguntado. Sem essa confirmacao, NAO afirme o dado especifico (o "
+        "adversario, o placar, o numero, o nome): diga que nao conseguiu confirmar o dado "
+        "atual e aponte a fonte para o usuario ver na origem. Errar um placar ou uma "
+        "cotacao com cara de certeza e pior que admitir que a busca nao trouxe o atual.\n\n"
     )
     return aviso + "\n\n".join(blocos)
 
@@ -1434,6 +1667,46 @@ def _bloco_termos_no_prompt(valve_txt):
     )
 
 
+# TRAVA DE ARQUIVO (simetrica as de cima, mas para o OUTRO lado): forca 'arquivo' quando
+# o classificador manda um PEDIDO DE PRODUZIR ARQUIVO para 'documentos'/'geral'. Bug real:
+# "transforme isso num html com a identidade da Nidum" caiu em 'documentos' (verbo de
+# transformacao + formato HTML nao estavam no prompt, e o tema era Nidum); a rota de
+# documentos responde no chat, entao despejou ~900 linhas de HTML em vez de chamar a tool.
+# As outras tres travas so resgatam PARA 'documentos'; esta e a UNICA que resgata DE
+# 'documentos', porque o defeito e documentos engolindo arquivo.
+#
+# EXIGE DOIS SINAIS na mesma frase, perto um do outro: um VERBO de producao E um
+# SUBSTANTIVO de arquivo entregavel - senao vira palpite. NAO entram 'documento(s)'
+# (palavra do acervo institucional) nem 'imagem/logo/figura/foto': a rota 'imagem' segue
+# decidida pelo classificador (por isso a trava sobrescreve so 'documentos'/'geral', NUNCA
+# 'imagem'). O regex e todo ASCII e roda no texto normalizado (sem acento).
+_VERBO_PRODUZIR = (
+    r"(?:gera|gere|gerar|gerando|cria|crie|criar|criando|monta|monte|montar|"
+    r"faca|facam|fazer|fazendo|prepara|prepare|preparar|produz|produza|produzir|"
+    r"transforma|transforme|transformar|converta|converte|converter|"
+    r"exporta|exporte|exportar|salva|salve|salvar|baixa|baixe|baixar|"
+    r"passa|passe|passar|vira|virar)"
+)
+_SUBST_ARQUIVO = (
+    r"(?:arquivo|html|pdf|pptx|ppt|powerpoint|apresentacao|apresentacoes|slides|"
+    r"deck|docx|word|xlsx|excel|planilha|planilhas|relatorio|relatorios|pagina|"
+    r"site)"
+)
+_RE_PEDE_ARQUIVO = re.compile(
+    r"\b" + _VERBO_PRODUZIR + r"\b[\s\S]{0,60}?\b" + _SUBST_ARQUIVO + r"\b"
+    r"|\b" + _SUBST_ARQUIVO + r"\b[\s\S]{0,40}?"
+    r"\b(?:para\s+baixar|para\s+download|pronto\s+para\s+baixar|em\s+anexo)\b",
+    re.IGNORECASE,
+)
+
+
+def _pede_arquivo(texto):
+    # PURA. True se o texto pede para PRODUZIR um arquivo entregavel: verbo de producao +
+    # substantivo de arquivo perto, OU substantivo de arquivo + "para baixar/download/em
+    # anexo". Roda no texto normalizado (sem acento); o regex e todo sem acento.
+    return bool(_RE_PEDE_ARQUIVO.search(_normalizar_ascii(texto or "")))
+
+
 class Pipe:
     class Valves(BaseModel):
         ROUTER_MODEL: str = Field(default="gpt-5-mini")
@@ -1519,9 +1792,24 @@ class Pipe:
         # Liga/desliga sem republish. DESLIGA e o modo seguro: sem web, 'geral' responde
         # com o proprio conhecimento do modelo, como antes da fatia 3.
         WEB_NA_ROTA_GERAL: bool = Field(default=True)
-        # Quantos resultados da web injetar. 3 e o que a sonda trouxe; mais que isso e
-        # ruido, dado que os snippets do DDGS gratis ja sao de qualidade variavel.
+        # Quantos resultados da web injetar. Pode subir - a sonda mostrou a rota geral
+        # recebendo 693 a 2726 chars (contra ~44k da institucional). Tunar pela sonda.
         WEB_MAX_RESULTADOS: int = Field(default=3)
+        # WEB DIRETO NO TAVILY (1.39.0). ON = o pipe chama o Tavily ele mesmo, para pedir
+        # os params de recencia que o wrapper do OWUI nao pede. OFF = fallback para
+        # search_web (engine do dropdown). Se a TAVILY_API_KEY faltar, cai no fallback
+        # sozinho - nunca fica sem web por config.
+        WEB_TAVILY_DIRETO: bool = Field(default=True)
+        # Params de RECENCIA - so aplicados quando o classificador marca '| recente'.
+        # DEFAULTS PROVISORIOS: a janela certa sai da SONDA (par Santos/dolar), nao daqui.
+        # 'days' e a janela; a sonda dira se 1 acerta o dolar e erra o Santos (-> maior).
+        WEB_RECENTE_DAYS: int = Field(default=7)
+        # topic='news' restringe a artigos de noticia: ajuda jogo/noticia, PODE atrapalhar
+        # cotacao (que nao e 'news'). Vazio = nao manda topic. A sonda decide.
+        WEB_RECENTE_TOPIC: str = Field(default="")
+        # include_raw_content: pagina inteira em vez do snippet. Mais contexto, mais
+        # tokens. A sonda mede se vale o peso; default OFF (snippet primeiro).
+        WEB_RECENTE_RAW: bool = Field(default=False)
 
     def __init__(self):
         self.valves = self.Valves()
@@ -1808,29 +2096,71 @@ class Pipe:
         msgs.insert(0, {"role": "system", "content": texto})
         return msgs
 
-    async def _contexto_web(self, request, user, texto):
+    async def _contexto_web(self, request, user, texto, recente=False):
         # Busca na WEB (rota geral) e devolve um bloco de contexto pronto para injetar,
         # ou "" se nada util voltou. So-leitura do ponto de vista do pipe: nao muda a base.
         #
-        # USA search_web, NAO process_web_search - de proposito. O process_web_search
-        # checa a permissao 'features.web_search' DENTRO da funcao (retrieval.py:2222) e
-        # ela fica OFF por desenho (defesa em duas camadas): daria 403 para todo coautor.
-        # O search_web (retrieval.py:1889) e a camada de baixo - sem gate de permissao,
-        # sem gate de ENABLE_WEB_SEARCH. Provado por sonda com usuario NAO-ADMIN (a conta
-        # da Amanda, role='user'): roda, e devolve list[SearchResult] com .snippet.
-        # Como usamos o snippet que ja vem, NAO ha carregamento de pagina (scraping) e o
-        # BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL e irrelevante - ele so afeta o
-        # process_web_search.
-        from open_webui.routers.retrieval import search_web
+        # DOIS CAMINHOS (1.39.0):
+        #  - TAVILY DIRETO (default, se WEB_TAVILY_DIRETO e a chave existem): o pipe chama
+        #    a API do Tavily ELE MESMO, para pedir os params de RECENCIA que o wrapper do
+        #    OWUI nao pede (topic/days/search_depth). So o pipe pode fazer isso: a decisao
+        #    de "esta pergunta e sobre o AGORA?" ('recente') vem do CLASSIFICADOR, e o
+        #    _contexto_web e o unico ponto que tem a pergunta E o veredito. O tavily.py do
+        #    OWUI recebe so (query, count) - nao sabe a intencao (medido: ver diario/sonda).
+        #  - FALLBACK search_web: se a valve esta off OU a chave falta, cai no caminho
+        #    antigo (search_web pela engine do dropdown). Nunca fica sem web por config.
+        #
+        # RECENCIA SO QUANDO 'recente' (economia, ponto do Davi): search_depth='advanced'
+        # custa 2 creditos (basico=1) no free tier de 1.000/mes. Pergunta atemporal ("quem
+        # foi Getulio Vargas") fica no BASICO; so a pergunta sobre o agora paga o advanced.
+        api_key = getattr(request.app.state.config, "TAVILY_API_KEY", "") or ""
+        usar_tavily = self.valves.WEB_TAVILY_DIRETO and api_key
 
-        engine = request.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
-        resultados = await search_web(request, engine, texto, user)
-        contexto = _montar_contexto_web(resultados, self.valves.WEB_MAX_RESULTADOS)
-        n = len(resultados or [])
         log.info(
-            "chatnd: web -> engine=%s resultados=%d contexto=%d chars",
-            engine, n, len(contexto),
+            "chatnd: web buscando -> %s recente=%s | query=%r",
+            "tavily-direto" if usar_tavily else "search_web(fallback)",
+            recente, (texto or "")[:120],
         )
+
+        if usar_tavily:
+            # advanced/topic/days SO quando recente - o atemporal fica barato e amplo.
+            depth = "advanced" if recente else "basic"
+            resultados = await _tavily_buscar(
+                api_key, texto,
+                max_results=self.valves.WEB_MAX_RESULTADOS,
+                search_depth=depth,
+                topic=(self.valves.WEB_RECENTE_TOPIC or None) if recente else None,
+                days=self.valves.WEB_RECENTE_DAYS if recente else None,
+                raw_content=self.valves.WEB_RECENTE_RAW if recente else False,
+            )
+            marca = "tavily"
+            # CREDITO CONTAVEL no log (ponto do Davi): basic=1cr, advanced=2cr no Tavily.
+            # Com ~30% recentes, chega perto do teto de 1.000/mes; se estourar e
+            # pay-as-you-go a ~$0,008/cr. Grepar 'cr~2' no log da o consumo do mes.
+            custo = "cr~2" if depth == "advanced" else "cr~1"
+        else:
+            from open_webui.routers.retrieval import search_web
+            engine = request.app.state.config.WEB_SEARCH_ENGINE or "duckduckgo"
+            resultados = await search_web(request, engine, texto, user)
+            marca = engine
+            custo = "cr~0"
+
+        n = len(resultados or [])
+        contexto = _montar_contexto_web(resultados, self.valves.WEB_MAX_RESULTADOS)
+        # FAIL-LOUD (1.38.0): VAZIO vira WARNING - degradacao (rate-limit, engine fora)
+        # tem que gritar, senao a rota geral responde sem web e ninguem ve o buraco
+        # (familia do "0 orfaos"). O log ANTES da busca (acima) aparece mesmo se travar.
+        if n == 0:
+            log.warning(
+                "chatnd: web VAZIO -> %s recente=%s %s trouxe 0 resultados (rate-limit? "
+                "chave? engine fora?). A rota geral respondeu SEM web.",
+                marca, recente, custo,
+            )
+        else:
+            log.info(
+                "chatnd: web -> %s recente=%s %s resultados=%d contexto=%d chars",
+                marca, recente, custo, n, len(contexto),
+            )
         return contexto
 
     async def _stream_resiliente(self, body_iterator):
@@ -2054,15 +2384,24 @@ class Pipe:
             )
         return ""
 
-    async def _gerar_arquivo(self, request, user, messages, __user__):
-        dados = await self._chamar_gerador(request, user, messages, GERADOR)
+    async def _gerar_arquivo(self, request, user, messages, __user__, imagens=None):
+        # imagens = anexos do usuario (data-URLs), extraidos pelo pipe na rota de
+        # arquivo. Os BYTES nunca entram no prompt: o GERADOR recebe so os marcadores
+        # (IMAGEM_1...) e devolve onde cada um entra; os bytes vao por parametro para
+        # a tool. Sem anexo, tudo segue identico ao caminho de antes.
+        imagens = imagens or []
+        sistema = GERADOR
+        if imagens:
+            messages = _msgs_sem_imagem(messages)
+            sistema = GERADOR + _nota_imagens(len(imagens))
+        dados = await self._chamar_gerador(request, user, messages, sistema)
         # Rede de seguranca: se o JSON falhou OU veio sem conteudo (ex.: slides
         # vazio por estouro de tamanho), tenta UMA vez com instrucao estrita.
         if not self._dados_uteis(dados):
             log.warning(
                 "chatnd: gerador devolveu JSON invalido/vazio; tentando reforco"
             )
-            reforco = GERADOR + (
+            reforco = sistema + (
                 "\n\nATENCAO: a tentativa anterior voltou VAZIA ou invalida. "
                 "Responda AGORA com UM JSON valido e COMPLETO, com o campo de "
                 "conteudo (slides/secoes/planilhas/html) preenchido. Sem prosa, "
@@ -2080,30 +2419,42 @@ class Pipe:
             )
         tipo = (dados.get("tipo") or "pptx").lower()
         titulo = dados.get("titulo") or "Documento"
+        # Ecossistema para a nomenclatura oficial do arquivo (gerador 2.3.0+). Passado por
+        # argumento NOMEADO: se a sigla vier vazia ou invalida, o gerador cai no padrao e
+        # NUNCA falha por causa do nome. Requer a tool 2.3.0 republicada junto com o pipe.
+        eco = dados.get("ecossistema") or ""
         tool = await self._get_tool()
+        # As imagens vao por argumento NOMEADO (mesmo padrao do ecossistema=eco): os
+        # bytes saem do pipe direto para a tool, sem passar por modelo nenhum. xlsx NAO
+        # recebe (imagem em planilha esta fora de escopo). Requer a tool 2.5.0.
         if tipo == "xlsx":
             saida = await tool.gerar_xlsx(
-                titulo, dados.get("planilhas") or [], True, __user__
+                titulo, dados.get("planilhas") or [], True, __user__, ecossistema=eco
             )
         elif tipo == "docx":
             saida = await tool.gerar_docx(
-                titulo, dados.get("secoes") or [], True, __user__
+                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco,
+                imagens=imagens,
             )
         elif tipo == "pdf":
             saida = await tool.gerar_pdf(
-                titulo, dados.get("secoes") or [], True, __user__
+                titulo, dados.get("secoes") or [], True, __user__, ecossistema=eco,
+                imagens=imagens,
             )
         elif tipo in ("apresentacao", "apresentacao_html", "slides_html", "deck"):
             saida = await tool.gerar_apresentacao_html(
-                titulo, dados.get("slides") or [], __user__
+                titulo, dados.get("slides") or [], __user__, ecossistema=eco,
+                imagens=imagens,
             )
         elif tipo == "html":
             saida = await tool.gerar_html(
-                titulo, dados.get("html") or "", __user__
+                titulo, dados.get("html") or "", __user__, ecossistema=eco,
+                imagens=imagens,
             )
         else:
             saida = await tool.gerar_pptx(
-                titulo, dados.get("slides") or [], True, __user__
+                titulo, dados.get("slides") or [], True, __user__, ecossistema=eco,
+                imagens=imagens,
             )
         # Item 2 (escopo por arquivo): se o pedido juntava varios modulos/partes
         # e o arquivo saiu OK, oferecer gerar os demais - um por vez.
@@ -2354,6 +2705,16 @@ class Pipe:
             categoria = "documentos"
             log.info("chatnd: trava 'termo canonico' -> geral vira documentos")
 
+        # TRAVA 4 (1.40.0) - PEDIDO DE ARQUIVO. Simetrica as tres de cima, mas resgata
+        # PARA 'arquivo' (nao para 'documentos'). Bug real: "transforme isso num html com a
+        # identidade da Nidum" caiu em 'documentos' e a rota despejou o HTML no chat em vez
+        # de chamar a tool. E a UNICA trava que sobrescreve 'documentos' (as outras so o
+        # alimentam) - porque o defeito e documentos engolindo arquivo. NUNCA toca 'imagem':
+        # essa rota segue com o classificador (por isso o gate e so documentos/geral).
+        if categoria in ("documentos", "geral") and _pede_arquivo(texto):
+            log.info("chatnd: trava 'pede arquivo' -> %s vira arquivo", categoria)
+            categoria = "arquivo"
+
         log.info(
             "chatnd: roteador -> %s (classificador=%r)", categoria, saida or "(atalho)"
         )
@@ -2408,6 +2769,19 @@ class Pipe:
         if categoria == "arquivo":
             try:
                 msgs = body.get("messages") or []
+                # ANEXO DE IMAGEM na rota de arquivo (1.43.0). Era AQUI que o anexo se
+                # perdia: a rota montava o prompt so com texto e nunca olhava as partes
+                # de imagem da mensagem - o modelo, sem poder inserir nada, escrevia um
+                # placeholder. Reusa os mesmos detectores da rota de imagem.
+                _mu = _ultima_msg_usuario(msgs)
+                imagens_anexo = (
+                    _extrair_imagens_anexo(_mu) if _tem_anexo_imagem(_mu) else []
+                )
+                if imagens_anexo:
+                    log.info(
+                        "chatnd: rota de arquivo com %d imagem(ns) anexada(s)",
+                        len(imagens_anexo),
+                    )
                 if texto:
                     consulta = _texto_de_busca(body.get("messages"), 3) or texto
                     try:
@@ -2421,7 +2795,9 @@ class Pipe:
                         contexto = ""
                     if contexto:
                         msgs = self._injetar_contexto_arquivo(msgs, contexto)
-                return await self._gerar_arquivo(__request__, user, msgs, __user__)
+                return await self._gerar_arquivo(
+                    __request__, user, msgs, __user__, imagens_anexo
+                )
             except Exception as e:
                 log.exception("chatnd: falha na rota de arquivo")
                 return "Falha ao gerar o arquivo: " + str(e)
@@ -2452,8 +2828,14 @@ class Pipe:
         # e NUNCA ve web; 'geral' tem web e NUNCA ve base. E o desenho da governanca -
         # "isto e sobre a Nidum?" decide qual das duas, e so uma toca cada fonte.
         if categoria == "geral" and self.valves.WEB_NA_ROTA_GERAL and texto:
+            # 'recente' vem do CLASSIFICADOR (marcador '| recente'), lido igual ao
+            # '| triade'. E juiz, nao regex - a licao do 'quando': a decisao "isto e sobre
+            # o agora?" e do modelo com contexto, nao de uma lista de palavras.
+            recente = "recente" in saida
             try:
-                contexto_web = await self._contexto_web(__request__, user, texto)
+                contexto_web = await self._contexto_web(
+                    __request__, user, texto, recente=recente
+                )
             except Exception:
                 # Web e um EXTRA - se falha (rate-limit do DDGS, rede), a conversa segue
                 # sem ela, com o proprio conhecimento do modelo. Nao derruba a resposta.

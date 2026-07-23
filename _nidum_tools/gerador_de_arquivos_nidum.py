@@ -1,10 +1,98 @@
 """
 title: Gerador de Arquivos Nidum
 author: Nidum
-version: 2.2.0
-description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Devolve link de download nativo.
+version: 2.5.0
+description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Insere imagens anexadas pelo usuario. Devolve link de download nativo.
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
+  2.5.0:
+    - IMAGEM ANEXADA PELO USUARIO (capacidade NOVA; par do pipe chatnd 1.43.0 - republicar
+      os dois juntos). Os metodos gerar_pptx, gerar_docx, gerar_pdf, gerar_html e
+      gerar_apresentacao_html ganharam 'imagens: list = None' DEPOIS dos parametros
+      existentes (chamadas atuais nao quebram). gerar_xlsx NAO recebe: imagem em planilha
+      esta fora de escopo. Os bytes chegam por PARAMETRO, vindos do pipe - nunca por modelo.
+    - COMO A POSICAO E DECIDIDA: o modelo poe um marcador ("IMAGEM_1") no campo 'imagem' do
+      slide/secao; _imagem_do_item resolve pelo NUMERO (tolerante a "imagem 1", "1"). Em
+      tipo=html nao ha campo, entao o marcador escrito no documento e substituido pela
+      imagem (_inserir_imagens_html trata tanto <img src="IMAGEM_1"> quanto o marcador
+      solto, e APAGA marcador orfao - senao "IMAGEM_1" sairia como texto cru no arquivo).
+    - LAYOUT. PPTX e deck: a imagem ganha o PROPRIO slide logo apos o slide que a
+      posicionou - os layouts (capa, cartoes, numerada, destaque) sao composicoes fechadas
+      e encaixar foto dentro deles colidiria com texto; em slide proprio ela aparece
+      grande, centralizada, com margem, com o titulo como legenda e a logo da marca.
+      DOCX/PDF: inline, centralizada, no fim da secao. PROPORCAO E INVIOLAVEL: _encaixar
+      calcula UM fator pelo lado limitante e aplica nos dois eixos (nunca estica nem
+      achata); reduz o quanto precisar e amplia no maximo 2x (_MAX_AMPLIACAO), para nao
+      deixar uma imagem pequena visivelmente pixelada.
+    - DEGRADACAO SEGURA (filosofia do RAG opcional): imagem problematica NUNCA derruba a
+      geracao. Formato detectado por MAGIC BYTES (jpeg/png/gif/webp), nao pelo mime
+      declarado - que mente. Bytes que nao sao imagem, formato que a lib do formato de
+      saida nao aceita (ex.: webp no PDF sem PIL com webp) ou falha na insercao: loga e o
+      arquivo sai SEM aquela imagem. Item invalido nao DESLOCA os marcadores dos demais.
+    - QUALIDADE: a imagem entra em RESOLUCAO ORIGINAL (bytes embutidos sem reamostrar nem
+      recomprimir - PPTX/DOCX byte-identicos; PDF faz passthrough do JPEG/DCTDecode). A
+      escala e do renderizador (PowerPoint/Word/leitor), em alta qualidade.
+    - TODO (trade-off consciente, NAO mexer agora): como a imagem entra em resolucao
+      original, um arquivo com varias fotos de celular pode ficar pesado (20 MB+) e
+      atrapalhar e-mail/SharePoint. Fica a favor da qualidade por ora; encarar so quando
+      incomodar (ex.: reamostrar acima de um teto de lado maior, com filtro LANCZOS).
+  2.4.0:
+    - APROVACAO DE MARCA (auditoria da 2.3.0). Fatia A (contraste/cores): a regra "pedra e
+      SUPORTE, nunca texto sobre areia" (2.18:1) tinha sido consertada na 2.3.0 so no HTML/
+      deck; estendida agora aos 3 formatos que faltavam - antetitulos do PPTX e assinaturas
+      de rodape do PDF e DOCX: pedra 9D9890 -> escuro 1F1E1B. Bordas de tabela em cor nao-
+      oficial DEDAD0 -> pedra 9D9890 (aqui pedra e uso CERTO: filete) no HTML/XLSX/PDF.
+      Tons fora da paleta -> escuro: texto de citacao do HTML (5b574f) e palco do deck
+      (15140f, decisao do dono: escuro oficial, nao um tom mais escuro que a paleta).
+    - Fatia B (varredura de azul): procurado qualquer azul cravado a mao fora do ceu oficial
+      4F7187 em todos os formatos - NENHUM encontrado. Os 7 azuis do arquivo sao todos
+      4F7187. Sem mudanca de codigo; a varredura e o resultado.
+    - Fatia C (assinatura do rodape): separador unificado em PONTO. HTML usava "&middot;",
+      DOCX/PDF usavam " - "; agora os tres sao "nidum. fazer da casa um ninho." Wordmark
+      'nidum' minusculo mantido no rodape; a frase e literal do Documento Fundador.
+    - Fatia D (logo na abertura E no encerramento). Regra de marca: logo no topo e no fim,
+      UMA vez cada (nao em toda pagina). Estado por formato: PPTX ja tinha (capa +
+      encerramento); deck ja tinha (cover + logo do ultimo slide); PDF ja tinha no topo, so
+      FALTAVA o fim (adicionado, centralizado). DOCX NAO tinha nenhum - adicionados topo e
+      fim (centralizados, terracota sobre branco). HTML so tinha o rodape (fim) - adicionado
+      o header (topo); e o rodape deixou de sumir no @media print, para a logo de fim
+      sobreviver a impressao. XLSX nao recebe (grade, sem capa/fim). Logo terracota em fundo
+      areia/branco (a logica de cor por fundo ja existente foi mantida).
+  2.3.0:
+    - EDITOR HTML embutido: barra fixa "Editar"/"Salvar HTML" no HTML e no deck gerados.
+      Editar liga contenteditable no corpo (a barra fica de fora); Salvar serializa a pagina
+      INTEIRA com as edicoes (document.documentElement.outerHTML, com <!DOCTYPE html>) e
+      baixa via Blob - offline, sem servidor, e o arquivo baixado continua editavel. Ctrl/
+      Cmd+S salva (previne o "salvar pagina" do navegador); some em @media print; injecao
+      IDEMPOTENTE (marcador NIDUM_EDITOR - reabrir o arquivo salvo nao duplica a barra). No
+      deck, o keydown das setas/espaco ignora quando a edicao esta ligada (window.__ndEdit),
+      senao digitar trocava de slide. Valve EDITOR_HTML (default True) desliga. O nome
+      sugerido no download e o _nome_padrao (calculado antes da montagem).
+    - BUG gerar_html: o titulo era interpolado no <title> SEM escapar - '<' ou '&' quebravam
+      a tag. Agora passa por _esc (o deck ja escapava).
+    - NOMENCLATURA OFICIAL (Tec_Office_e_Governanca_de_Dados_v2, slide 7): arquivos agora
+      saem como ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext (ex.: MKT_Campanha_01-06-2026_v1.pptx),
+      no lugar de titulo.replace(" ","_")+.ext (sem ecossistema, sem data, sem versao, com
+      acento e barra crus). Helper _nome_padrao: fold de acento p/ ASCII, TEMA em CamelCase
+      (<=60 chars), DATA no fuso de Brasilia (UTC-3 - o servidor roda em UTC; sem isto,
+      arquivo gerado depois das 21h ganhava a data do dia seguinte), ECOSSISTEMA validado
+      contra lista fechada (FONTE/REG/MKT/PROD/OPS/FIN/JUR/ACA/TEC/SUS/CC/CT/CE). Sigla
+      vazia/invalida cai na valve ECOSSISTEMA_PADRAO (default TEC) e loga - o nome NUNCA
+      derruba a geracao. Os 6 metodos ganharam ecossistema="" e versao=1 DEPOIS de __user__
+      (nao quebra chamadas posicionais). Par: pipe chatnd 1.41.0 emite 'ecossistema' no
+      GERADOR - republicar os dois juntos.
+    - PALETA CORRIGIDA para o brandbook oficial (MKT_BrandbookNidum V1). Tres das seis
+      cores estavam quase certas mas erradas, algumas cravadas a mao no CSS ignorando as
+      constantes: musgo 647260 -> 515E52; pedra 8A8880 -> 9D9890; areia EAE6DC -> E5E0D5.
+      Trocado em TODO lugar (constantes E hexes soltos, incl. rgba decimais). As outras
+      tres ja estavam certas (terracota 9A4A2E, ceu 4F7187, escuro 1F1E1B).
+    - CONTRASTE (efeito colateral da paleta): pedra 9D9890 sobre areia E5E0D5 da 2.18:1
+      (reprova). Pedra e cor de SUPORTE no brandbook: rodape e antetitulo do deck, que a
+      usavam como TEXTO, passaram a escuro suavizado rgba(31,30,27,.62); pedra fica so em
+      filetes/bordas. E com o fundo virando areia, as superficies de alternancia do HTML
+      (blockquote/code/pre) ficariam areia-sobre-areia (sumindo) - passaram a BRANCO. A
+      zebra do XLSX/PDF NAO muda: assenta sobre branco (ROWBACKGROUNDS=[branco, cremealt]),
+      onde areia contrasta - por isso CREME_ALT continua E5E0D5.
   2.2.0:
     - GERACAO NAO-BLOQUEANTE: a montagem dos arquivos (pptx/xlsx/docx/pdf/html),
       que e trabalho sincrono pesado de CPU, agora roda em thread separada
@@ -34,21 +122,82 @@ import json
 import logging
 import uuid
 import inspect
+import re
+import datetime
+import unicodedata
 
 from pydantic import BaseModel
 
 log = logging.getLogger("gerador_nidum")
 
+
+# ----------------------------------------------------------------------------
+# Nomenclatura oficial de arquivos (Tec_Office_e_Governanca_de_Dados_v2, slide 7):
+#   ECOSSISTEMA_TEMA_DD-MM-AAAA_vN.ext   (ex.: MKT_CampanhaLancamento_01-06-2026_v1.pptx)
+# NUNCA falha por causa do nome (o arquivo TEM que sair): ecossistema vazio/invalido cai
+# no padrao (valve ECOSSISTEMA_PADRAO) e loga; acento e reduzido a ASCII.
+# ----------------------------------------------------------------------------
+_ECOSSISTEMAS = ("FONTE", "REG", "MKT", "PROD", "OPS", "FIN", "JUR", "ACA",
+                 "TEC", "SUS", "CC", "CT", "CE")
+
+
+def _fold_ascii(txt):
+    # Acento quebra download em alguns clientes: reduz a ASCII. Preserva a CAIXA (o nome
+    # usa CamelCase), ao contrario do _normalizar_ascii do pipe, que abaixa tudo.
+    return (unicodedata.normalize("NFKD", txt or "")
+            .encode("ascii", "ignore").decode("ascii"))
+
+
+def _tema_camel(titulo, limite=60):
+    # TEMA em CamelCase, so [A-Za-z0-9], cortado a ~limite chars.
+    palavras = re.findall(r"[A-Za-z0-9]+", _fold_ascii(titulo or ""))
+    camel = "".join(p[:1].upper() + p[1:] for p in palavras) or "Documento"
+    return camel[:limite]
+
+
+def _data_brasilia():
+    # DD-MM-AAAA no fuso de Brasilia (UTC-3, fixo - o Brasil nao tem mais horario de
+    # verao). O servidor roda em UTC; sem isto, um arquivo gerado depois das 21h (UTC)
+    # ganharia a data do dia SEGUINTE.
+    tz = datetime.timezone(datetime.timedelta(hours=-3))
+    return datetime.datetime.now(tz).strftime("%d-%m-%Y")
+
+
+def _nome_padrao(titulo, ecossistema, extensao, versao=1, padrao="TEC"):
+    # Monta ECOSSISTEMA_TEMA_DATA_vN.ext. Robusto a lixo: sigla invalida -> padrao (+log);
+    # versao nao-inteira -> 1; extensao com ou sem ponto. Nunca levanta por causa do nome.
+    eco = _fold_ascii(str(ecossistema or "")).strip().upper()
+    if eco not in _ECOSSISTEMAS:
+        if eco:
+            log.warning("gerador_nidum: ecossistema %r invalido - usando padrao %r",
+                        ecossistema, padrao)
+        eco = _fold_ascii(str(padrao or "TEC")).strip().upper()
+        if eco not in _ECOSSISTEMAS:
+            eco = "TEC"
+    try:
+        v = int(versao)
+    except Exception:
+        v = 1
+    if v < 1:
+        v = 1
+    ext = str(extensao or "").lstrip(".").lower() or "bin"
+    return "%s_%s_%s_v%d.%s" % (eco, _tema_camel(titulo), _data_brasilia(), v, ext)
+
 # ----------------------------------------------------------------------------
 # Identidade visual da Nidum (brandbook MKT) - cores em hex, sem o '#'
 # ----------------------------------------------------------------------------
-NIDUM_TERRACOTA = "9A4A2E"   # cor de assinatura / destaque
-NIDUM_VERDE = "647260"       # verde oliva - titulos e blocos
-NIDUM_AZUL = "4F7187"        # azul aco - blocos
-NIDUM_CINZA = "8A8880"       # cinza quente / taupe - antetitulos
-NIDUM_PRETO = "1F1E1B"       # quase preto
-NIDUM_CREME = "EAE6DC"       # fundo principal dos slides de conteudo
-NIDUM_CREME_ALT = "E5E0D5"   # creme alternativo
+# Paleta oficial (MKT_BrandbookNidum V1). Nomes do brandbook entre parenteses.
+NIDUM_TERRACOTA = "9A4A2E"   # terracota - assinatura / destaque
+NIDUM_VERDE = "515E52"       # musgo - titulos e blocos
+NIDUM_AZUL = "4F7187"        # ceu - blocos
+NIDUM_CINZA = "9D9890"       # pedra - SUPORTE (filetes/bordas); NAO usar como texto
+                             #         sobre areia (2.18:1 reprova) - ver rodape/ante
+NIDUM_PRETO = "1F1E1B"       # escuro - cor de TEXTO (inclusive antetitulos)
+NIDUM_CREME = "E5E0D5"       # areia - fundo principal
+# CREME_ALT fica E5E0D5 de proposito: e a zebra de tabela do XLSX/PDF, que assenta sobre
+# BRANCO (ROWBACKGROUNDS=[branco, cremealt]); ali areia contrasta. So no HTML - onde o
+# fundo virou areia - a alternancia (blockquote/code/pre) passou a BRANCO. Nao unificar.
+NIDUM_CREME_ALT = "E5E0D5"   # areia (zebra sobre branco no xlsx/pdf)
 NIDUM_BRANCO = "FFFFFF"
 # Tipografia da marca
 NIDUM_FONT = "Maxima Nouva"  # titulos, subtitulos e corpo
@@ -92,6 +241,165 @@ def _logo_path(cor):
     return p if os.path.isfile(p) else None
 
 
+# --------------------------------------------------------- imagens enviadas pelo usuario
+# Imagem que o USUARIO anexou no chat (2.5.0). Os bytes chegam do pipe por PARAMETRO
+# (imagens=), nunca por modelo: uma foto em base64 vira um texto enorme no prompt (estoura
+# contexto e provoca 429). O modelo so ve MARCADORES (IMAGEM_1, IMAGEM_2...) e diz ONDE
+# cada uma entra, pelo campo 'imagem' do slide/secao. Custo de token: zero.
+#
+# FILOSOFIA (igual a do RAG opcional): imagem problematica NUNCA derruba a geracao. Se nao
+# decodifica, se o formato nao e suportado pela lib do formato de saida, ou se a insercao
+# falha - loga e segue SEM a imagem. O arquivo sai.
+_MAX_AMPLIACAO = 2.0   # teto de ampliacao: acima disso, imagem pequena fica pixelada
+
+_ASSINATURAS_IMG = (
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+)
+
+
+def _formato_imagem(b):
+    # Detecta pelo CONTEUDO (magic bytes), nao pelo mime declarado - o mime do anexo
+    # mente com frequencia. Devolve "" quando nao reconhece (o chamador degrada).
+    if not b or len(b) < 12:
+        return ""
+    for assinatura, fmt in _ASSINATURAS_IMG:
+        if b.startswith(assinatura):
+            return fmt
+    if b[0:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+
+def _decodificar_imagem(item):
+    # Aceita bytes crus, data-URL base64 ("data:image/jpeg;base64,..."), base64 puro ou
+    # dict {"url"/"dados"/"bytes"} - o formato que _extrair_imagens_anexo (pipe) devolve
+    # e a data-URL. Devolve (bytes, formato); (None, "") quando nao da. NUNCA levanta.
+    import base64
+
+    try:
+        if isinstance(item, dict):
+            item = item.get("url") or item.get("dados") or item.get("bytes") or ""
+        if isinstance(item, (bytes, bytearray)):
+            b = bytes(item)
+        elif isinstance(item, str):
+            s = item.strip()
+            if not s:
+                return (None, "")
+            if s.startswith("data:"):
+                corte = s.find(",")
+                if corte < 0:
+                    return (None, "")
+                s = s[corte + 1:]
+            b = base64.b64decode(s)
+        else:
+            return (None, "")
+        fmt = _formato_imagem(b)
+        if not fmt:
+            log.warning(
+                "gerador_nidum: anexo descartado - formato de imagem nao reconhecido"
+            )
+            return (None, "")
+        return (b, fmt)
+    except Exception:
+        log.exception("gerador_nidum: falha ao decodificar imagem anexada")
+        return (None, "")
+
+
+def _normalizar_imagens(imagens):
+    # Lista vinda do pipe -> [{"marcador","bytes","formato"}]. A POSICAO define o
+    # marcador (a 1a e IMAGEM_1), exatamente como o pipe conta ao modelo. Um item
+    # invalido e descartado mas NAO desloca os demais - senao IMAGEM_2 viraria a 3a.
+    saida = []
+    for i, it in enumerate(_lista(imagens)):
+        b, fmt = _decodificar_imagem(it)
+        if not b:
+            continue
+        saida.append({"marcador": "IMAGEM_" + str(i + 1), "bytes": b, "formato": fmt})
+    return saida
+
+
+def _imagem_do_item(imagens_norm, item):
+    # Resolve o campo 'imagem' de um slide/secao. Tolerante ao que o modelo escreve:
+    # "IMAGEM_2", "imagem 2", "2" - vale o NUMERO. Sem casar -> None (sem imagem).
+    if not imagens_norm or not isinstance(item, dict):
+        return None
+    ref = item.get("imagem")
+    if ref is None or isinstance(ref, (list, dict)):
+        return None
+    m = re.search(r"(\d+)", str(ref))
+    if not m:
+        return None
+    alvo = "IMAGEM_" + m.group(1)
+    for img in imagens_norm:
+        if img["marcador"] == alvo:
+            return img
+    return None
+
+
+def _encaixar(nat_w, nat_h, box_w, box_h):
+    # Escala UNIFORME nos dois eixos para caber na caixa: a imagem nunca estica nem
+    # achata. Calcula pelo lado LIMITANTE (o menor fator) e deixa o outro seguir.
+    # Reduz o quanto precisar; amplia no maximo _MAX_AMPLIACAO.
+    try:
+        nat_w = float(nat_w)
+        nat_h = float(nat_h)
+        if nat_w <= 0 or nat_h <= 0:
+            return (box_w, box_h)
+        escala = min(float(box_w) / nat_w, float(box_h) / nat_h)
+        escala = min(escala, _MAX_AMPLIACAO)
+        return (nat_w * escala, nat_h * escala)
+    except Exception:
+        return (box_w, box_h)
+
+
+def _img_data_uri(img):
+    # <img src="data:..."> para os formatos HTML (deck e pagina). Autocontido.
+    import base64
+
+    try:
+        b64 = base64.b64encode(img["bytes"]).decode("ascii")
+        return "data:image/" + img["formato"] + ";base64," + b64
+    except Exception:
+        log.exception("gerador_nidum: falha ao embutir imagem no html")
+        return ""
+
+
+def _inserir_imagens_html(c, imagens_norm):
+    # Em tipo=html o modelo escreve HTML livre, entao nao ha campo 'imagem': ele posiciona
+    # o MARCADOR no documento e aqui ele vira a imagem de verdade. Dois jeitos que o modelo
+    # naturalmente escreve, ambos tratados:
+    #   1) <img src="IMAGEM_1">  -> troca so o src (preserva a tag e os atributos dele)
+    #   2) IMAGEM_1 solto        -> vira um <figure> centralizado com margem
+    # Marcador sem imagem correspondente e APAGADO: melhor nada do que "IMAGEM_1" cru
+    # aparecendo no documento final (era exatamente o sintoma do placeholder de texto).
+    if not c:
+        return c
+    for img in imagens_norm or []:
+        uri = _img_data_uri(img)
+        if not uri:
+            continue
+        marc = img["marcador"]
+        c = re.sub(
+            r"""(<img\b[^>]*\bsrc\s*=\s*)(['"])\s*""" + marc + r"""\s*\2""",
+            lambda m: m.group(1) + m.group(2) + uri + m.group(2),
+            c,
+            flags=re.IGNORECASE,
+        )
+        figura = (
+            '<figure style="margin:28px auto;text-align:center;max-width:100%">'
+            '<img src="' + uri + '" alt="" style="max-width:100%;height:auto;'
+            'display:block;margin:0 auto;border-radius:10px">'
+            "</figure>"
+        )
+        c = re.sub(r"\b" + marc + r"\b", figura, c, flags=re.IGNORECASE)
+    # Varre marcadores orfaos (o modelo citou IMAGEM_9 sem existir) - nao deixa lixo.
+    c = re.sub(r"\bIMAGEM_\d+\b", "", c, flags=re.IGNORECASE)
+    return c
+
+
 def _font_path(fname):
     d = _brand_dir()
     if not d:
@@ -131,23 +439,23 @@ def _brand_css():
         ]
     )
     rules = (
-        ":root{--terracota:#9A4A2E;--verde:#647260;--azul:#4F7187;"
-        "--cinza:#8A8880;--preto:#1F1E1B;--creme:#EAE6DC;--cremealt:#E5E0D5;}"
+        ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;"
+        "--cinza:#9D9890;--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;}"
         "*{box-sizing:border-box}"
-        "html{background:#EAE6DC}"
-        "body{background:#EAE6DC;color:#1F1E1B;"
+        "html{background:#E5E0D5}"
+        "body{background:#E5E0D5;color:#1F1E1B;"
         "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif;"
         "line-height:1.72;margin:0 auto;max-width:880px;padding:64px 44px 72px;"
         "font-size:18px;-webkit-font-smoothing:antialiased;}"
         "h1{font-family:'Ibrand','Maxima Nouva',sans-serif;font-size:2.7em;"
-        "color:#647260;font-weight:400;line-height:1.08;"
+        "color:#515E52;font-weight:400;line-height:1.08;"
         "letter-spacing:-.005em;margin:0 0 .5em;}"
         "h2{font-family:'Ibrand','Maxima Nouva',sans-serif;font-size:1.8em;"
-        "color:#647260;font-weight:400;line-height:1.18;"
+        "color:#515E52;font-weight:400;line-height:1.18;"
         "margin:1.9em 0 .5em;padding-bottom:.22em;"
         "border-bottom:2px solid rgba(154,74,46,.22);}"
         "h3{font-size:1.28em;color:#9A4A2E;font-weight:600;margin:1.5em 0 .4em;}"
-        "h4{font-size:1em;color:#647260;text-transform:uppercase;"
+        "h4{font-size:1em;color:#515E52;text-transform:uppercase;"
         "letter-spacing:.14em;margin:1.5em 0 .4em;}"
         "p{margin:0 0 1.1em;}"
         "a{color:#9A4A2E;text-decoration:none;"
@@ -155,28 +463,29 @@ def _brand_css():
         "strong,b{color:#9A4A2E;font-weight:700;}"
         "ul,ol{margin:0 0 1.1em 1.3em;} li{margin:.45em 0;}"
         "blockquote{margin:1.7em 0;padding:.7em 1.5em;border-left:4px solid #9A4A2E;"
-        "background:#E5E0D5;border-radius:0 12px 12px 0;color:#5b574f;font-style:italic;}"
-        "hr{border:none;border-top:2px solid rgba(138,136,128,.32);margin:2.4em 0;}"
+        "background:#FFFFFF;border-radius:0 12px 12px 0;color:#1F1E1B;font-style:italic;}"
+        "hr{border:none;border-top:2px solid rgba(157,152,144,.32);margin:2.4em 0;}"
         "img{max-width:100%;height:auto;border-radius:14px;"
         "box-shadow:0 12px 32px rgba(31,30,27,.15);}"
         "table{border-collapse:separate;border-spacing:0;width:100%;margin:1.7em 0;"
         "border-radius:12px;overflow:hidden;box-shadow:0 6px 20px rgba(31,30,27,.08);}"
-        "th{background:#647260;color:#EAE6DC;text-align:left;padding:12px 14px;"
+        "th{background:#515E52;color:#E5E0D5;text-align:left;padding:12px 14px;"
         "font-weight:600;}"
-        "td{padding:11px 14px;border-bottom:1px solid #DEDAD0;}"
+        "td{padding:11px 14px;border-bottom:1px solid #9D9890;}"
         "tr:nth-child(even) td{background:rgba(255,255,255,.45);}"
         "tr:last-child td{border-bottom:none;}"
-        "code{font-family:Consolas,Menlo,monospace;background:#E5E0D5;"
+        "code{font-family:Consolas,Menlo,monospace;background:#FFFFFF;"
         "border-radius:6px;padding:.12em .4em;font-size:.92em;}"
-        "pre{font-family:Consolas,Menlo,monospace;background:#E5E0D5;"
+        "pre{font-family:Consolas,Menlo,monospace;background:#FFFFFF;"
         "border-radius:10px;padding:1em 1.2em;overflow:auto;}"
+        ".nidum-header{margin:0 0 40px;}"
+        ".nidum-header img{height:30px;box-shadow:none;border-radius:0;margin:0;}"
         ".nidum-footer{margin-top:64px;padding-top:18px;"
-        "border-top:2px solid rgba(138,136,128,.3);display:flex;align-items:center;"
-        "gap:10px;color:#8A8880;font-size:.9em;letter-spacing:.02em;}"
+        "border-top:2px solid rgba(157,152,144,.3);display:flex;align-items:center;"
+        "gap:10px;color:rgba(31,30,27,.62);font-size:.9em;letter-spacing:.02em;}"
         ".nidum-footer img{height:20px;box-shadow:none;border-radius:0;margin:0;}"
         "@media(max-width:900px){body{padding:40px 22px 60px;font-size:17px;}}"
-        "@media print{body{max-width:none;padding:0;background:#fff;}"
-        ".nidum-footer{display:none;}}"
+        "@media print{body{max-width:none;padding:0;background:#fff;}}"
     )
     return "<style>/*NIDUM_BRAND*/\n" + faces + rules + "</style>"
 
@@ -202,10 +511,20 @@ def _injetar_marca_html(conteudo):
         else:
             conteudo = css + conteudo
     logo = _logo_b64("terracota")
+    # Logo de ABERTURA (topo) - regra 2.4.0. Pagina areia -> logo terracota. Inserido logo
+    # apos <body>; o rodape (abaixo) traz a logo de ENCERRAMENTO. Idempotente pelo marcador
+    # NIDUM_BRAND (checado no topo desta funcao).
+    if logo:
+        header = "<header class='nidum-header'><img src='" + logo + "'></header>"
+        lb = conteudo.lower().find("<body")
+        if lb != -1:
+            gt = conteudo.find(">", lb)
+            if gt != -1:
+                conteudo = conteudo[:gt + 1] + header + conteudo[gt + 1:]
     footer = (
         "<footer class='nidum-footer'>"
         + (("<img src='" + logo + "'>") if logo else "")
-        + "<span>nidum &middot; fazer da casa um ninho.</span></footer>"
+        + "<span>nidum. fazer da casa um ninho.</span></footer>"
     )
     bidx = conteudo.lower().rfind("</body>")
     if bidx != -1:
@@ -222,6 +541,88 @@ def _esc(t):
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+# ----------------------------------------------------------------------------
+# EDITOR HTML embutido (v2.3.0): barra fixa "Editar" / "Salvar HTML" injetada no HTML e no
+# deck gerados. Editar liga contenteditable no corpo (a barra fica DE FORA, senao o usuario
+# editaria os botoes); Salvar serializa a PAGINA INTEIRA (com as edicoes) e baixa via Blob
+# - offline, sem servidor, duplo clique - e o arquivo baixado CONTINUA editavel (a barra vai
+# junto). Idempotente pelo marcador NIDUM_EDITOR: o arquivo salvo ja tem a barra e nao
+# duplica se for reinjetado. Some em @media print. Rotulos ASCII (Editar/Salvar HTML).
+# ----------------------------------------------------------------------------
+_EDITOR_MARCADOR = "NIDUM_EDITOR"
+
+
+def _esc_js(t):
+    # Escapa uma string para caber dentro de um literal JS entre aspas duplas. O "</"
+    # vira "<\/" para um nome com '</script>' nao fechar a tag no meio do bloco.
+    return (str(t if t is not None else "")
+            .replace("\\", "\\\\").replace('"', '\\"')
+            .replace("\n", " ").replace("\r", " ").replace("</", "<\\/"))
+
+
+def _bloco_editor_html(nome_download):
+    nm = _esc_js(nome_download or "documento.html")
+    css = (
+        "<style>/*" + _EDITOR_MARCADOR + "*/"
+        "#ndbar{position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;gap:8px;"
+        "font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
+        "#ndbar button{border:none;border-radius:999px;padding:8px 15px;font-size:14px;"
+        "cursor:pointer;box-shadow:0 4px 14px rgba(31,30,27,.22);background:#515E52;"
+        "color:#E5E0D5;font-weight:600;line-height:1}"
+        "#ndbar button.alt{background:#9A4A2E;color:#E5E0D5}"
+        "body.ndediting{outline:2px dashed rgba(154,74,46,.55);outline-offset:-8px}"
+        "@media print{#ndbar{display:none!important}}"
+        "</style>"
+    )
+    barra = (
+        "<div id=\"ndbar\" contenteditable=\"false\">"
+        "<button id=\"ndedit\" type=\"button\">Editar</button>"
+        "<button id=\"ndsave\" type=\"button\" class=\"alt\">Salvar HTML</button>"
+        "</div>"
+    )
+    js = (
+        "<script>/*" + _EDITOR_MARCADOR + "*/(function(){"
+        "if(window.__ndInit){return;}window.__ndInit=true;"
+        "var NM=\"" + nm + "\";window.__ndEdit=false;"
+        "function bar(){return document.getElementById('ndbar');}"
+        "function setEdit(on){window.__ndEdit=!!on;"
+        "document.body.setAttribute('contenteditable',on?'true':'false');"
+        "document.body.classList.toggle('ndediting',!!on);"
+        "var bb=bar();if(bb){bb.setAttribute('contenteditable','false');}"
+        "var e=document.getElementById('ndedit');if(e){e.textContent=on?'Editando':'Editar';}}"
+        "function save(){var was=window.__ndEdit;if(was){setEdit(false);}"
+        "var html='<!DOCTYPE html>\\n'+document.documentElement.outerHTML;"
+        "var blob=new Blob([html],{type:'text/html;charset=utf-8'});"
+        "var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=NM;"
+        "document.body.appendChild(a);a.click();"
+        "setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);"
+        "if(was){setEdit(true);}}"
+        "var eb=document.getElementById('ndedit');"
+        "if(eb){eb.addEventListener('click',function(){setEdit(!window.__ndEdit);});}"
+        "var sb=document.getElementById('ndsave');"
+        "if(sb){sb.addEventListener('click',save);}"
+        "document.addEventListener('keydown',function(ev){"
+        "if((ev.ctrlKey||ev.metaKey)&&(ev.key==='s'||ev.key==='S')){ev.preventDefault();save();}"
+        "},true);"
+        "})();</script>"
+    )
+    return css + barra + js
+
+
+def _injetar_editor(html, nome_download):
+    # Insere a barra antes de </body>. Idempotente: se o marcador ja existe (arquivo salvo
+    # sendo reinjetado), devolve intacto - nunca duplica a barra.
+    if not html:
+        return html or ""
+    if _EDITOR_MARCADOR in html:
+        return html
+    bloco = _bloco_editor_html(nome_download)
+    idx = html.lower().rfind("</body>")
+    if idx == -1:
+        return html + bloco
+    return html[:idx] + bloco + html[idx:]
 
 
 def _logo_b64(cor):
@@ -241,10 +642,10 @@ def _logo_b64(cor):
 
 DECK_CSS = (
     "*{box-sizing:border-box;margin:0;padding:0}"
-    ":root{--terracota:#9A4A2E;--verde:#647260;--azul:#4F7187;--cinza:#8A8880;"
-    "--preto:#1F1E1B;--creme:#EAE6DC;--cremealt:#E5E0D5;--rn:26px;"
+    ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;--cinza:#9D9890;"
+    "--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;--rn:26px;"
     "--sc:0 26px 70px rgba(31,30,27,.34)}"
-    "html,body{height:100%;background:#15140f;"
+    "html,body{height:100%;background:#1F1E1B;"
     "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
     ".deck{position:fixed;inset:0;display:flex;align-items:center;"
     "justify-content:center;padding:3vh 3vw}"
@@ -252,11 +653,11 @@ DECK_CSS = (
     "border-radius:var(--rn);overflow:hidden;box-shadow:var(--sc);opacity:0;"
     "transform:translateY(16px) scale(.985);transition:opacity .5s ease,"
     "transform .55s cubic-bezier(.2,.7,.2,1);pointer-events:none;display:flex;"
-    "flex-direction:column;justify-content:center;padding:6% 7%;background:#EAE6DC;"
+    "flex-direction:column;justify-content:center;padding:6% 7%;background:#E5E0D5;"
     "color:#1F1E1B}"
     ".slide.active{opacity:1;transform:none;pointer-events:auto}"
     ".slide .ante{font-size:.92rem;letter-spacing:.2em;text-transform:uppercase;"
-    "color:var(--cinza);margin-bottom:1rem}"
+    "color:rgba(31,30,27,.62);margin-bottom:1rem}"
     ".slide h1{font-family:'Ibrand','Maxima Nouva',sans-serif;"
     "font-size:clamp(2.1rem,5.4vw,3.9rem);color:var(--verde);"
     "font-weight:400;line-height:1.05}"
@@ -273,7 +674,7 @@ DECK_CSS = (
     ".slide.cover .sub{color:var(--terracota);font-size:clamp(1.1rem,2vw,1.5rem);"
     "margin-top:.7rem}"
     ".slide.fill{justify-content:center;color:var(--creme)}"
-    ".slide.fill .ante{color:rgba(234,230,220,.72)}"
+    ".slide.fill .ante{color:rgba(229,224,213,.72)}"
     ".slide.fill h1,.slide.fill h2{color:var(--creme)} .slide.fill p{color:var(--creme)}"
     ".slide.split{flex-direction:row;padding:0}"
     ".split .left{flex:0 0 42%;display:flex;align-items:center;padding:6.5%}"
@@ -288,20 +689,20 @@ DECK_CSS = (
     ".cards{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;margin-top:1.3rem}"
     ".card{border-radius:18px;padding:1.3rem 1.45rem;color:var(--creme)}"
     ".card h3{font-size:1.22rem;margin-bottom:.35rem} "
-    ".card p{color:rgba(234,230,220,.92);margin-top:.1rem;font-size:1.02rem;max-width:none}"
+    ".card p{color:rgba(229,224,213,.92);margin-top:.1rem;font-size:1.02rem;max-width:none}"
     ".nav{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;"
     "align-items:center;gap:14px;background:rgba(31,30,27,.55);"
     "-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);padding:8px 16px;"
     "border-radius:999px;z-index:10}"
-    ".nav button{border:none;background:transparent;color:#EAE6DC;font-size:1.3rem;"
+    ".nav button{border:none;background:transparent;color:#E5E0D5;font-size:1.3rem;"
     "cursor:pointer;width:34px;height:34px;border-radius:50%;line-height:1;"
     "transition:background .15s}"
-    ".nav button:hover{background:rgba(234,230,220,.18)}"
+    ".nav button:hover{background:rgba(229,224,213,.18)}"
     ".dots{display:flex;gap:7px}"
-    ".dot{width:8px;height:8px;border-radius:50%;background:rgba(234,230,220,.42);"
+    ".dot{width:8px;height:8px;border-radius:50%;background:rgba(229,224,213,.42);"
     "cursor:pointer;transition:background .2s,width .2s}"
-    ".dot.on{background:#EAE6DC;width:22px;border-radius:999px}"
-    ".count{color:#EAE6DC;font-size:.84rem;min-width:52px;text-align:center;"
+    ".dot.on{background:#E5E0D5;width:22px;border-radius:999px}"
+    ".count{color:#E5E0D5;font-size:.84rem;min-width:52px;text-align:center;"
     "letter-spacing:.04em}"
     "@media print{.nav{display:none}.slide{position:relative;opacity:1!important;"
     "transform:none!important;margin:0 auto 24px;page-break-after:always}}"
@@ -315,6 +716,7 @@ DECK_JS = (
     "D.forEach(function(d,k){d.classList.toggle('on',k===i);});"
     "var c=document.getElementById('cnt');if(c){c.textContent=(i+1)+' / '+S.length;}}"
     "document.addEventListener('keydown',function(e){"
+    "if(window.__ndEdit){return;}"
     "if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){e.preventDefault();go(i+1);}"
     "if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1);}});"
     "go(0);</script>"
@@ -353,7 +755,7 @@ def _slide_html(s, tipo, mapa, cores_secao, cores_cartao, sec, logo_t, logo_a):
         return ("<section class='slide fill' style='background:" + c + "'>"
                 + ante + h1 + par + logo_color + "</section>")
     if tipo == "divisao":
-        c = mapa.get(str(s.get("cor", "verde")).lower(), "#647260")
+        c = mapa.get(str(s.get("cor", "verde")).lower(), "#515E52")
         right = ante + par + bl()
         return ("<section class='slide split'><div class='left' style='background:"
                 + c + "'>" + h2 + "</div><div class='right'>" + right + "</div></section>")
@@ -606,7 +1008,12 @@ class Tools:
     class Valves(BaseModel):
         # v2.2.0: OPENWEBUI_BASE_URL e OPENWEBUI_API_KEY removidas - nunca eram
         # usadas no codigo (campo de secret morto).
-        pass
+        # v2.3.0: ecossistema usado na nomenclatura quando o pipe nao informa uma sigla
+        # valida (ou informa uma fora da lista fechada). Nunca deixa o nome sem prefixo.
+        ECOSSISTEMA_PADRAO: str = "TEC"
+        # v2.3.0: barra "Editar"/"Salvar HTML" no HTML e no deck gerados. Desligar aqui
+        # se algum cliente nao quiser o editor embutido.
+        EDITOR_HTML: bool = True
 
     def __init__(self):
         self.valves = self.Valves()
@@ -616,24 +1023,33 @@ class Tools:
     # para o LOG do servidor; o chat recebe mensagem limpa com codigo de erro.
     # ------------------------------------------------------------------
     async def gerar_pptx(
-        self, titulo: str, slides: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, slides: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera uma apresentacao PowerPoint (.pptx) e devolve um link de download.
 
         :param titulo: titulo geral da apresentacao.
         :param slides: lista de slides. Cada slide e um dicionario com:
             tipo ('capa'/'secao'/'conteudo'/'encerramento'), titulo,
-            subtitulo (opcional), bullets (opcional, lista), texto (opcional).
+            subtitulo (opcional), bullets (opcional, lista), texto (opcional),
+            imagem (opcional, marcador tipo 'IMAGEM_1').
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
+            ordem dos marcadores IMAGEM_1, IMAGEM_2... Vem do pipe por parametro,
+            nunca de um modelo.
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._pptx(titulo, slides, marca, __user__)
+            return await self._pptx(titulo, slides, marca, __user__, ecossistema,
+                                    versao, imagens)
         except Exception:
             return _erro_limpo("gerar_pptx")
 
     async def gerar_xlsx(
-        self, titulo: str, planilhas: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, planilhas: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
     ) -> str:
         """Gera uma planilha Excel (.xlsx) e devolve um link de download.
 
@@ -641,53 +1057,73 @@ class Tools:
         :param planilhas: lista de abas. Cada aba e um dicionario com:
             nome, cabecalhos (lista), linhas (lista de listas).
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._xlsx(titulo, planilhas, marca, __user__)
+            return await self._xlsx(titulo, planilhas, marca, __user__, ecossistema, versao)
         except Exception:
             return _erro_limpo("gerar_xlsx")
 
     async def gerar_docx(
-        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera um documento Word (.docx) e devolve um link de download.
 
         :param titulo: titulo do documento.
         :param secoes: lista de secoes. Cada secao e um dicionario com:
-            heading, paragrafos (opcional, lista), bullets (opcional, lista).
+            heading, paragrafos (opcional, lista), bullets (opcional, lista),
+            imagem (opcional, marcador tipo 'IMAGEM_1').
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
+            ordem dos marcadores IMAGEM_1, IMAGEM_2...
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._docx(titulo, secoes, marca, __user__)
+            return await self._docx(titulo, secoes, marca, __user__, ecossistema,
+                                    versao, imagens)
         except Exception:
             return _erro_limpo("gerar_docx")
 
     async def gerar_pdf(
-        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None
+        self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera um documento PDF e devolve um link de download.
 
         :param titulo: titulo do documento.
         :param secoes: lista de secoes. Cada secao e um dicionario com:
             heading, paragrafos (opcional, lista), bullets (opcional, lista),
-            tabela (opcional, lista de listas).
+            tabela (opcional, lista de listas), imagem (opcional, 'IMAGEM_1').
         :param marca: aplica a identidade visual da Nidum (padrao True).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
+            ordem dos marcadores IMAGEM_1, IMAGEM_2...
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._pdf(titulo, secoes, marca, __user__)
+            return await self._pdf(titulo, secoes, marca, __user__, ecossistema,
+                                   versao, imagens)
         except Exception:
             return _erro_limpo("gerar_pdf")
 
     async def gerar_html(
-        self, titulo: str, html: str, __user__: dict = None
+        self, titulo: str, html: str, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera um arquivo HTML (.html) e devolve um link de download.
 
         :param titulo: titulo/nome do arquivo.
         :param html: documento HTML completo (string), pronto para abrir no navegador.
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO. O modelo posiciona o marcador
+            (IMAGEM_1) no HTML e aqui ele vira a imagem embutida em base64.
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
@@ -697,22 +1133,36 @@ class Tools:
             if not conteudo:
                 return _diag_entrada_vazia("gerar_html", "html", html)
 
+            # Nome calculado ANTES da montagem: o bloco do editor precisa dele (e o nome
+            # sugerido no download do "Salvar HTML").
+            nome = _nome_padrao(titulo, ecossistema, "html", versao,
+                                self.valves.ECOSSISTEMA_PADRAO)
+            com_editor = self.valves.EDITOR_HTML
+            imgs = _normalizar_imagens(imagens)
+
             def _montar():
                 c = conteudo
-                # Se vier so um fragmento, embrulha num documento HTML minimo.
+                # Marcadores -> imagens reais ANTES de embrulhar/injetar marca, para a
+                # imagem entrar no corpo do documento como qualquer outro conteudo.
+                if imgs:
+                    c = _inserir_imagens_html(c, imgs)
+                # Se vier so um fragmento, embrulha num documento HTML minimo. O titulo e
+                # ESCAPADO: '<' ou '&' no titulo quebrariam a tag <title> (bug 2.5).
                 if "<html" not in c.lower():
                     c = (
                         '<!DOCTYPE html>\n<html lang="pt-br"><head><meta charset="utf-8">'
                         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-                        "<title>" + (titulo or "Documento") + "</title></head><body>\n"
+                        "<title>" + _esc(titulo or "Documento") + "</title></head><body>\n"
                         + c + "\n</body></html>"
                     )
                 # _injetar_marca_html le fontes/logo do disco (IO) - por isso
                 # roda aqui dentro da thread.
-                return _injetar_marca_html(c).encode("utf-8")
+                c = _injetar_marca_html(c)
+                if com_editor:
+                    c = _injetar_editor(c, nome)
+                return c.encode("utf-8")
 
             data = await asyncio.to_thread(_montar)
-            nome = (titulo or "pagina").strip().replace(" ", "_") + ".html"
             link = await _salvar_e_linkar(
                 data, nome, "text/html", _get_user_id(__user__)
             )
@@ -721,18 +1171,24 @@ class Tools:
             return _erro_limpo("gerar_html")
 
     async def gerar_apresentacao_html(
-        self, titulo: str, slides: list, __user__: dict = None
+        self, titulo: str, slides: list, __user__: dict = None,
+        ecossistema: str = "", versao: int = 1, imagens: list = None
     ) -> str:
         """Gera uma APRESENTACAO em HTML navegavel (deck) com a identidade Nidum.
 
         Deck autocontido: 1 slide por vez, navegacao por setas/teclado/dots,
         cantos arredondados, transicoes, contraste correto e fonte embutida.
         :param slides: mesma estrutura do gerar_pptx (lista de slides com tipo,
-            titulo, subtitulo, texto, bullets, cor, itens).
+            titulo, subtitulo, texto, bullets, cor, itens, imagem).
+        :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
+        :param versao: numero de versao para o nome do arquivo (padrao 1).
+        :param imagens: imagens ANEXADAS PELO USUARIO, na ordem dos marcadores.
         :return: link /api/v1/files/{id}/content para baixar o arquivo.
         """
         try:
-            return await self._apresentacao_html(titulo, slides, __user__)
+            return await self._apresentacao_html(
+                titulo, slides, __user__, ecossistema, versao, imagens
+            )
         except Exception:
             return _erro_limpo("gerar_apresentacao_html")
 
@@ -741,11 +1197,18 @@ class Tools:
     # v2.2.0: a montagem pesada roda em asyncio.to_thread para NAO travar o
     # event loop do Open WebUI (um render grande congelava todos os usuarios).
     # ------------------------------------------------------------------
-    async def _apresentacao_html(self, titulo, slides, __user__):
+    async def _apresentacao_html(self, titulo, slides, __user__,
+                                 ecossistema="", versao=1, imagens=None):
         raw = slides
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_apresentacao_html", "slides", raw)
+        imgs = _normalizar_imagens(imagens)
+
+        # Nome ANTES da montagem (o editor precisa dele para o download).
+        nome = _nome_padrao(titulo, ecossistema, "html", versao,
+                            self.valves.ECOSSISTEMA_PADRAO)
+        com_editor = self.valves.EDITOR_HTML
 
         def _montar():
             faces = "".join(
@@ -761,11 +1224,11 @@ class Tools:
             logo_t = _logo_b64("terracota")
             logo_a = _logo_b64("areia")
             mapa = {
-                "verde": "#647260", "azul": "#4F7187", "terracota": "#9A4A2E",
-                "preto": "#1F1E1B", "creme": "#EAE6DC",
+                "verde": "#515E52", "azul": "#4F7187", "terracota": "#9A4A2E",
+                "preto": "#1F1E1B", "creme": "#E5E0D5",
             }
-            cores_secao = ["#647260", "#4F7187", "#9A4A2E"]
-            cores_cartao = ["#4F7187", "#647260", "#9A4A2E", "#1F1E1B"]
+            cores_secao = ["#515E52", "#4F7187", "#9A4A2E"]
+            cores_cartao = ["#4F7187", "#515E52", "#9A4A2E", "#1F1E1B"]
             sec = [0]
 
             partes = []
@@ -776,10 +1239,30 @@ class Tools:
                         s, tipo, mapa, cores_secao, cores_cartao, sec, logo_t, logo_a
                     )
                 )
+                # Imagem do usuario: slide PROPRIO logo apos, igual ao pptx (os layouts
+                # do deck sao composicoes fechadas; a foto em slide proprio aparece
+                # grande e nao briga com o texto). object-fit:contain = nunca distorce.
+                img_s = _imagem_do_item(imgs, s)
+                if img_s is not None:
+                    uri = _img_data_uri(img_s)
+                    if uri:
+                        leg = _esc(s.get("titulo"))
+                        partes.append(
+                            "<section class='slide'>"
+                            + (("<h2>" + leg + "</h2>") if leg else "")
+                            + "<img src='" + uri + "' alt='' style='display:block;"
+                            "margin:18px auto 0;max-width:88%;max-height:66vh;"
+                            "width:auto;height:auto;object-fit:contain;"
+                            "border-radius:12px'>"
+                            + (("<img class='logo' src='" + logo_t + "'>")
+                               if logo_t else "")
+                            + "</section>"
+                        )
             deck = "".join(partes)
+            # Os dots contam os slides RENDERIZADOS (as imagens acrescentam slides).
             dots = "".join(
                 "<span class='dot' onclick='go(" + str(k) + ")'></span>"
-                for k in range(len(slides))
+                for k in range(len(partes))
             )
             nav = (
                 "<div class='nav'><button onclick='go(i-1)'>&#8249;</button>"
@@ -794,20 +1277,23 @@ class Tools:
                 "<style>" + faces + DECK_CSS + "</style></head><body>"
                 "<div class='deck'>" + deck + "</div>" + nav + DECK_JS + "</body></html>"
             )
+            if com_editor:
+                html = _injetar_editor(html, nome)
             return html.encode("utf-8")
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "apresentacao").strip().replace(" ", "_") + ".html"
         link = await _salvar_e_linkar(
             data, nome, "text/html", _get_user_id(__user__)
         )
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _pptx(self, titulo, slides, marca, __user__):
+    async def _pptx(self, titulo, slides, marca, __user__,
+                    ecossistema="", versao=1, imagens=None):
         raw_slides = slides
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_pptx", "slides", raw_slides)
+        imgs = _normalizar_imagens(imagens)
 
         def _montar():
             from pptx import Presentation
@@ -919,6 +1405,42 @@ class Tools:
             def cor_de(nome, padrao):
                 return mapa_cor.get(str(nome).lower(), padrao) if nome else padrao
 
+            def add_slide_imagem(img, legenda):
+                # A imagem do usuario ganha o PROPRIO slide, logo apos o slide que a
+                # posicionou. Motivo: os layouts (capa, cartoes, numerada, destaque...)
+                # sao composicoes fechadas - encaixar uma foto dentro deles colidiria com
+                # texto e quebraria a regua de marca. Em slide proprio a imagem aparece
+                # grande, centralizada, com margem, e o deck continua limpo.
+                sl = prs.slides.add_slide(blank)
+                if marca:
+                    add_fundo(sl, creme)
+                if legenda:
+                    tfl = add_caixa(sl, Inches(0.9), Inches(0.45), Inches(11.5),
+                                    Inches(0.8))
+                    pl = tfl.paragraphs[0]
+                    pl.text = str(legenda)
+                    estilo(pl, 18, verde if marca else preto, bold=True,
+                           align=PP_ALIGN.CENTER)
+                topo = Inches(1.35) if legenda else Inches(0.8)
+                caixa_w = SW - Inches(2.0)
+                caixa_h = Inches(6.3) - topo
+                try:
+                    # add_picture sem width/height entra no TAMANHO NATIVO; dai medimos e
+                    # reescalamos com fator unico (nunca distorce).
+                    pic = sl.shapes.add_picture(io.BytesIO(img["bytes"]), 0, topo)
+                    w, h = _encaixar(pic.width, pic.height, caixa_w, caixa_h)
+                    pic.width = int(w)
+                    pic.height = int(h)
+                    pic.left = int((SW - pic.width) / 2)
+                    pic.top = int(topo + (caixa_h - pic.height) / 2)
+                except Exception:
+                    log.exception(
+                        "gerador_nidum: falha ao inserir imagem do usuario no pptx"
+                    )
+                    return
+                if marca:
+                    add_logo(sl, "terracota", Inches(11.1), Inches(6.8), Inches(1.6))
+
             for s in slides:
                 tipo = (s.get("tipo") or "conteudo").lower()
                 slide = prs.slides.add_slide(blank)
@@ -1004,7 +1526,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_r.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 13, cinza, upper=True)
+                        estilo(pa, 13, preto, upper=True)
                         first = False
                     if s.get("texto"):
                         p = tf_r.paragraphs[0] if first else tf_r.add_paragraph()
@@ -1024,7 +1546,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_t.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 14, cinza, upper=True)
+                        estilo(pa, 14, preto, upper=True)
                         pt = tf_t.add_paragraph()
                     else:
                         pt = tf_t.paragraphs[0]
@@ -1058,7 +1580,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_t.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 14, cinza, upper=True)
+                        estilo(pa, 14, preto, upper=True)
                         pt = tf_t.add_paragraph()
                     else:
                         pt = tf_t.paragraphs[0]
@@ -1091,7 +1613,7 @@ class Tools:
                     if s.get("texto"):
                         p2 = tf.add_paragraph()
                         p2.text = s["texto"]
-                        estilo(p2, 14, cinza if marca else preto, align=PP_ALIGN.CENTER)
+                        estilo(p2, 14, preto, align=PP_ALIGN.CENTER)
 
                 else:
                     if marca:
@@ -1100,7 +1622,7 @@ class Tools:
                     if s.get("subtitulo"):
                         pa = tf_t.paragraphs[0]
                         pa.text = s["subtitulo"]
-                        estilo(pa, 14, cinza if marca else preto, upper=True)
+                        estilo(pa, 14, preto, upper=True)
                         pt = tf_t.add_paragraph()
                     else:
                         pt = tf_t.paragraphs[0]
@@ -1122,17 +1644,23 @@ class Tools:
                     if marca:
                         add_logo(slide, "terracota", Inches(11.1), Inches(6.8), Inches(1.6))
 
+                # Imagem que o usuario anexou e o modelo posicionou NESTE slide.
+                img_s = _imagem_do_item(imgs, s)
+                if img_s is not None:
+                    add_slide_imagem(img_s, s.get("titulo") or "")
+
             buf = io.BytesIO()
             prs.save(buf)
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "apresentacao").strip().replace(" ", "_") + ".pptx"
+        nome = _nome_padrao(titulo, ecossistema, "pptx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _xlsx(self, titulo, planilhas, marca, __user__):
+    async def _xlsx(self, titulo, planilhas, marca, __user__,
+                    ecossistema="", versao=1):
         raw_planilhas = planilhas
         planilhas = _lista_de_dicts(planilhas)
         if not planilhas:
@@ -1151,7 +1679,7 @@ class Tools:
             f_body = Font(name=NIDUM_FONT, size=11, color=NIDUM_PRETO)
             fill_header = PatternFill("solid", fgColor=NIDUM_VERDE)
             fill_alt = PatternFill("solid", fgColor=NIDUM_CREME_ALT)
-            linha_side = Side(style="thin", color="DEDAD0")
+            linha_side = Side(style="thin", color=NIDUM_CINZA)
             borda_b = Border(bottom=linha_side)
             al_h = Alignment(horizontal="left", vertical="center")
             al_b = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -1216,20 +1744,22 @@ class Tools:
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "planilha").strip().replace(" ", "_") + ".xlsx"
+        nome = _nome_padrao(titulo, ecossistema, "xlsx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _docx(self, titulo, secoes, marca, __user__):
+    async def _docx(self, titulo, secoes, marca, __user__,
+                    ecossistema="", versao=1, imagens=None):
         raw_secoes = secoes
         secoes = _itens_loose(secoes, _texto_para_secao)
         if not secoes:
             return _diag_entrada_vazia("gerar_docx", "secoes", raw_secoes)
+        imgs = _normalizar_imagens(imagens)
 
         def _montar():
             from docx import Document
-            from docx.shared import Pt, RGBColor
+            from docx.shared import Pt, RGBColor, Inches
             from docx.enum.text import WD_ALIGN_PARAGRAPH
 
             verde = RGBColor(*_hex_to_rgb(NIDUM_VERDE))
@@ -1238,6 +1768,20 @@ class Tools:
             ink = RGBColor(*_hex_to_rgb(NIDUM_PRETO))
 
             doc = Document()
+
+            # Logo de marca (regra 2.4.0: abertura E encerramento). Pagina branca ->
+            # logo terracota. Centralizado, nunca em toda pagina - so topo e fim.
+            def _logo_par(cor):
+                lp = _logo_path(cor)
+                if not lp:
+                    return
+                try:
+                    par = doc.add_paragraph()
+                    par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    par.add_run().add_picture(lp, width=Inches(1.6))
+                except Exception:
+                    log.exception("gerador_nidum: falha ao inserir logo docx")
+
             if marca:
                 try:
                     normal = doc.styles["Normal"]
@@ -1261,6 +1805,29 @@ class Tools:
                             pass
                 except Exception:
                     log.exception("gerador_nidum: falha ao aplicar estilos docx")
+
+            def _imagem_par(img):
+                # Imagem do usuario, centralizada, dentro da largura util da pagina.
+                # add_picture com SO a largura ja preserva a proporcao (o python-docx
+                # calcula a altura); depois conferimos a altura e, se estourar, reduzimos
+                # os DOIS lados pelo mesmo fator - a forma nunca muda.
+                LARG_MAX = Inches(5.9)    # A4 menos as margens padrao
+                ALT_MAX = Inches(6.5)
+                try:
+                    par = doc.add_paragraph()
+                    par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = par.add_run()
+                    pic = run.add_picture(io.BytesIO(img["bytes"]))
+                    w, h = _encaixar(pic.width, pic.height, LARG_MAX, ALT_MAX)
+                    pic.width = int(w)
+                    pic.height = int(h)
+                except Exception:
+                    log.exception(
+                        "gerador_nidum: falha ao inserir imagem do usuario no docx"
+                    )
+
+            if marca:
+                _logo_par("terracota")   # logo de ABERTURA (topo)
 
             h = doc.add_heading(titulo or "Documento", level=0)
             for run in h.runs:
@@ -1286,14 +1853,20 @@ class Tools:
                     for run in pb.runs:
                         run.font.name = NIDUM_FONT
                         run.font.color.rgb = ink
+                img_s = _imagem_do_item(imgs, sec)
+                if img_s is not None:
+                    _imagem_par(img_s)
+
+            if marca:
+                _logo_par("terracota")   # logo de ENCERRAMENTO (fim)
 
             if marca:
                 try:
                     fp = doc.sections[0].footer.paragraphs[0]
-                    fr = fp.add_run("nidum  -  fazer da casa um ninho.")
+                    fr = fp.add_run("nidum. fazer da casa um ninho.")
                     fr.font.name = NIDUM_FONT
                     fr.font.size = Pt(8)
-                    fr.font.color.rgb = cinza
+                    fr.font.color.rgb = ink
                     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 except Exception:
                     log.exception("gerador_nidum: falha ao aplicar rodape docx")
@@ -1303,16 +1876,18 @@ class Tools:
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "documento").strip().replace(" ", "_") + ".docx"
+        nome = _nome_padrao(titulo, ecossistema, "docx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
         return "Arquivo gerado com sucesso. Link para download: " + link
 
-    async def _pdf(self, titulo, secoes, marca, __user__):
+    async def _pdf(self, titulo, secoes, marca, __user__,
+                   ecossistema="", versao=1, imagens=None):
         raw_secoes = secoes
         secoes = _itens_loose(secoes, _texto_para_secao)
         if not secoes:
             return _diag_entrada_vazia("gerar_pdf", "secoes", raw_secoes)
+        imgs = _normalizar_imagens(imagens)
 
         def _montar():
             from reportlab.lib.pagesizes import A4
@@ -1341,7 +1916,7 @@ class Tools:
             cinza = colors.HexColor("#" + NIDUM_CINZA)
             branco = colors.HexColor("#" + NIDUM_BRANCO)
             ink = preto
-            linha_cor = colors.HexColor("#DEDAD0")
+            linha_cor = colors.HexColor("#" + NIDUM_CINZA)
 
             # Registra a fonte da marca (fallback Helvetica se nao encontrar)
             FONT = "Helvetica"
@@ -1407,10 +1982,10 @@ class Tools:
                 canvas.setFillColor(creme)
                 canvas.rect(0, 0, doc.pagesize[0], doc.pagesize[1], fill=1, stroke=0)
                 # rodape: assinatura + numero de pagina
-                canvas.setFillColor(cinza)
+                canvas.setFillColor(preto)
                 canvas.setFont(FONT, 8)
                 canvas.drawString(
-                    22 * mm, 11 * mm, "nidum  -  fazer da casa um ninho."
+                    22 * mm, 11 * mm, "nidum. fazer da casa um ninho."
                 )
                 canvas.drawRightString(
                     doc.pagesize[0] - 22 * mm, 11 * mm, str(doc.page)
@@ -1452,6 +2027,28 @@ class Tools:
                     items = [ListItem(Paragraph(str(b), st_body)) for b in bullets]
                     flow.append(ListFlowable(items, bulletType="bullet"))
                     flow.append(Spacer(1, 2 * mm))
+                img_s = _imagem_do_item(imgs, sec)
+                if img_s is not None:
+                    # ImageReader da o tamanho NATIVO em pixels; _encaixar converte para
+                    # pontos com fator unico. WEBP depende de PIL com suporte a webp - se
+                    # a lib nao aceitar, cai no except, loga e o PDF sai SEM a imagem.
+                    try:
+                        from reportlab.lib.utils import ImageReader
+
+                        ir = ImageReader(io.BytesIO(img_s["bytes"]))
+                        nat_w, nat_h = ir.getSize()
+                        larg_util = docp.width
+                        w, h = _encaixar(nat_w, nat_h, larg_util, 150 * mm)
+                        flow.append(Spacer(1, 3 * mm))
+                        flow.append(
+                            Image(io.BytesIO(img_s["bytes"]), width=w, height=h,
+                                  hAlign="CENTER")
+                        )
+                        flow.append(Spacer(1, 4 * mm))
+                    except Exception:
+                        log.exception(
+                            "gerador_nidum: falha ao inserir imagem do usuario no pdf"
+                        )
                 tabela = sec.get("tabela")
                 if tabela:
                     tabela = [_lista(r) for r in _lista(tabela)]
@@ -1480,11 +2077,24 @@ class Tools:
                     flow.append(t)
                     flow.append(Spacer(1, 4 * mm))
 
+            # Logo de ENCERRAMENTO (regra 2.4.0: abertura E fim). O topo ja tem logo (acima);
+            # aqui fecha o documento. Centralizado, menor, terracota (pagina areia).
+            if marca:
+                lp_fim = _logo_path("terracota")
+                if lp_fim:
+                    try:
+                        flow.append(Spacer(1, 8 * mm))
+                        flow.append(
+                            Image(lp_fim, width=32 * mm, height=18 * mm, hAlign="CENTER")
+                        )
+                    except Exception:
+                        log.exception("gerador_nidum: falha ao inserir logo de fim no pdf")
+
             docp.build(flow, onFirstPage=_fundo, onLaterPages=_fundo)
             return buf.getvalue()
 
         data = await asyncio.to_thread(_montar)
-        nome = (titulo or "documento").strip().replace(" ", "_") + ".pdf"
+        nome = _nome_padrao(titulo, ecossistema, "pdf", versao, self.valves.ECOSSISTEMA_PADRAO)
         link = await _salvar_e_linkar(
             data, nome, "application/pdf", _get_user_id(__user__)
         )
