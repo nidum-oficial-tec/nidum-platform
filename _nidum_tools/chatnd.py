@@ -1,9 +1,37 @@
 """
 title: ChatND
 author: Nidum
-version: 1.47.0
+version: 1.48.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.48.0:
+    - TERCEIRA CAUSA do mesmo incidente, achada com a 1.47.0 ja em producao: o roteamento
+      passou a acertar ("classificador='arquivo'") e o canal recusou o material com
+      "3 anexo(s) SEM texto extraido" - mas o texto EXISTIA. O dono provou por tres vias
+      independentes no log da MESMA requisicao: a busca vetorial recuperou chunks dos tres
+      arquivos (start_index cobrindo os documentos inteiros), o volume batia com a medicao
+      fora do sistema (~52k vs 47.7k-56.5k) e o "bruto tinha 65002" mostrava o conteudo
+      dentro da propria requisicao.
+      CAUSA: file.data.content so e preenchido no modo FULL do OWUI (retrieval/utils.py:
+      1255). No modo RAG - o DEFAULT (RAG_FULL_CONTEXT=False) - o item de arquivo e uma
+      REFERENCIA LEVE: o OWUI usa so item['id'] para montar a colecao vetorial file-{id}
+      (utils.py:1289-1310) e NUNCA preenche data.content. Eu havia lido o campo certo, mas
+      no ramo errado do codigo - o que so vale para o modo que esta instancia nao usa.
+      FIX (o mesmo padrao do proprio OWUI): CADEIA DE TENTATIVAS em _completar_anexos -
+      1) body (file.data.content); 2) BANCO (Files.get_file_by_id(id).data['content'],
+      onde routers/retrieval.py:1689 grava o texto extraido). E exatamente o fallback que
+      o OWUI usa quando o campo do body vem vazio (utils.py:1270-1278). Loga QUAL fonte
+      funcionou. Acesso espelha a checagem do OWUI (dono ou admin).
+    - 'id' passa a ser capturado em _anexos_recentes - no modo RAG e a UNICA chave para o
+      texto. Sem ele nao havia fallback possivel.
+    - _diag_estrutura_anexos: loga a forma REAL do que chega (chaves por nivel + tamanhos)
+      ANTES de qualquer conclusao. Existe porque TRES causas seguidas vieram de supor a
+      estrutura em vez de medi-la.
+    - MENSAGEM DE RECUSA nao induz mais a causa errada: dizia "PDF digitalizado ou arquivo
+      em processamento" e nenhum dos dois era o caso (o texto existia e estava indexado).
+      Agora admite que a falha pode ser minha e que nao da para distinguir dali.
+    - NAO REGRIDE o que a 1.47.0 provou: o pedido limpo no roteamento e a recusa honesta
+      ficam como estao - a recusa so deixa de disparar quando houver texto de verdade.
   1.47.0:
     - SEGUNDA CAUSA do mesmo incidente (achada pelo dono no log de producao:
       "roteador -> documentos (classificador='geral')"). Para a frase "mantenha o conteudo
@@ -1439,13 +1467,40 @@ def _anexos_recentes(files, messages=None, n=5):
         # ILEGIVEL nao e descartado: entra com legivel=False para ser RELATADO. Sumir
         # com um anexo que o usuario anexou (PDF escaneado sem OCR, arquivo ainda em
         # processamento) e a mesma falha muda que este conserto ataca.
+        #
+        # 'id' e GUARDADO porque no modo RAG (o DEFAULT) este item vem SEM conteudo: o
+        # OWUI so usa item['id'] para montar a colecao vetorial file-{id}
+        # (retrieval/utils.py:1289-1310) e nunca preenche data.content. O id e a unica
+        # chave para buscar o texto no banco. Ver _completar_anexos.
         saida.append({
+            "id": it.get("id") or arq.get("id") or "",
             "nome": str(nome),
             "conteudo": conteudo,
             "chars": len(conteudo),
             "legivel": bool(conteudo.strip()),
+            "origem": "body" if conteudo.strip() else "",
         })
     return saida
+
+
+def _diag_estrutura_anexos(files):
+    # Diagnostico da forma REAL do que chega (chaves por nivel + tamanhos). Existe porque
+    # DUAS causas seguidas vieram de supor a estrutura em vez de medi-la: primeiro o
+    # body['metadata'] que nao existia, depois o data.content que so o modo full preenche.
+    partes = []
+    for i, it in enumerate(files if isinstance(files, list) else []):
+        if not isinstance(it, dict):
+            partes.append("[%d] nao-dict" % i)
+            continue
+        arq = it.get("file") if isinstance(it.get("file"), dict) else {}
+        dados = arq.get("data") if isinstance(arq.get("data"), dict) else {}
+        partes.append(
+            "[%d] type=%r id=%s | item:%s | file:%s | file.data:%s | content=%d chars"
+            % (i, it.get("type"), "sim" if it.get("id") else "NAO",
+               sorted(it.keys()), sorted(arq.keys()), sorted(dados.keys()),
+               len(dados.get("content") or ""))
+        )
+    return " || ".join(partes) if partes else "(nenhum anexo)"
 
 
 def _eh_imagem(arq, nome):
@@ -2699,6 +2754,61 @@ class Pipe:
                 break
         return messages
 
+    async def _completar_anexos(self, anexos, user):
+        # CADEIA DE TENTATIVAS para obter o texto do anexo, com log de QUAL funcionou.
+        #   1. body (file.data.content) - so vem preenchido no modo FULL do OWUI
+        #      (retrieval/utils.py:1255). No modo RAG, o DEFAULT desta instancia, o item e
+        #      uma REFERENCIA LEVE: o OWUI usa so item['id'] para montar a colecao vetorial
+        #      file-{id} (utils.py:1289-1310) e nunca preenche data.content.
+        #   2. banco (Files.get_file_by_id(id).data['content']) - onde o processamento
+        #      grava o texto extraido (routers/retrieval.py:1689). E o MESMO fallback que o
+        #      proprio OWUI usa quando o campo do body vem vazio (utils.py:1270-1278).
+        # Se as duas falharem, o anexo segue legivel=False e a recusa honesta age.
+        #
+        # ACESSO: espelha a checagem do OWUI (dono ou admin). Anexo de chat e sempre do
+        # proprio usuario; a checagem existe para isto nao virar via de leitura de arquivo
+        # alheio caso um id venha de outro lugar.
+        faltantes = [a for a in anexos if not a["legivel"] and a.get("id")]
+        if not faltantes:
+            return anexos
+        try:
+            from open_webui.models.files import Files
+        except Exception:
+            log.exception("chatnd: nao consegui importar Files para o fallback de anexo")
+            return anexos
+        for a in faltantes:
+            try:
+                fo = await Files.get_file_by_id(a["id"])
+            except Exception:
+                log.exception("chatnd: falha ao buscar anexo %s no banco", a["nome"])
+                continue
+            if not fo:
+                log.warning("chatnd: anexo %s nao encontrado no banco", a["nome"])
+                continue
+            dono = getattr(fo, "user_id", None)
+            if not (getattr(user, "role", "") == "admin"
+                    or dono == getattr(user, "id", None)):
+                log.warning(
+                    "chatnd: anexo %s pertence a outro usuario - nao lido", a["nome"]
+                )
+                continue
+            conteudo = ((getattr(fo, "data", None) or {}).get("content") or "")
+            if isinstance(conteudo, str) and conteudo.strip():
+                a["conteudo"] = conteudo
+                a["chars"] = len(conteudo)
+                a["legivel"] = True
+                a["origem"] = "banco"
+                log.info(
+                    "chatnd: anexo %s lido do BANCO (%d chars) - body veio sem conteudo",
+                    a["nome"], len(conteudo),
+                )
+            else:
+                log.warning(
+                    "chatnd: anexo %s sem texto tambem no banco (status=%r)",
+                    a["nome"], (getattr(fo, "data", None) or {}).get("status"),
+                )
+        return anexos
+
     async def _get_tool(self):
         # v1.12.0: lock evita que duas requisicoes concorrentes carreguem a
         # tool em duplicidade (double-checked locking).
@@ -3202,6 +3312,20 @@ class Pipe:
                     )
                 # CANAL 'TRANSFORMAR' (1.44.0): o anexo do usuario, INTEIRO.
                 todos = _anexos_recentes(_files)
+                if todos:
+                    # Diagnostico da forma REAL antes de qualquer conclusao (duas causas
+                    # seguidas vieram de supor a estrutura em vez de medi-la).
+                    log.info("chatnd: estrutura dos anexos -> %s",
+                             _diag_estrutura_anexos(_files))
+                    # Cadeia de tentativas: body -> banco. No modo RAG o body vem sem
+                    # conteudo, e sem isto o canal inteiro recusava material que EXISTE.
+                    todos = await self._completar_anexos(todos, user)
+                    log.info(
+                        "chatnd: anexos lidos -> %s",
+                        "; ".join("%s: %d chars (via %s)"
+                                  % (a["nome"], a["chars"], a["origem"] or "nenhuma")
+                                  for a in todos),
+                    )
                 anexos = [a for a in todos if a["legivel"]]
                 ilegiveis = [a for a in todos if not a["legivel"]]
                 aviso_ilegiveis = ""
@@ -3218,9 +3342,11 @@ class Pipe:
                             "Nao consegui LER o material que voce anexou (" + nomes + "), "
                             "entao nao vou gerar o arquivo - inventar o conteudo seria "
                             "pior que avisar.\n\n"
-                            "Isso costuma acontecer com PDF digitalizado (imagem sem "
-                            "texto) ou com arquivo ainda em processamento. Tente reenviar, "
-                            "ou me mande o conteudo em texto que eu monto o arquivo."
+                            "Pode ser um arquivo sem texto extraivel (PDF digitalizado, "
+                            "por exemplo), um arquivo ainda em processamento, ou uma falha "
+                            "minha ao ler o material - eu nao consigo distinguir daqui. "
+                            "Tente reenviar; se repetir, me mande o conteudo em texto que "
+                            "eu monto o arquivo."
                         )
                     aviso_ilegiveis = (
                         "\n\n---\nAviso: nao consegui ler " + nomes + " (sem texto "
