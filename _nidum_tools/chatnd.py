@@ -1,9 +1,104 @@
 """
 title: ChatND
 author: Nidum
-version: 1.48.0
+version: 1.50.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.50.0:
+    - ROTA ERRADA com IMAGEM anexada. Bug real: uma imagem + "refaca o design desse
+      material, mantendo o conteudo" gerou uma APRESENTACAO PPTX de ~10 slides, com a
+      imagem original embutida intacta num deles. Log: classificador='arquivo', nenhuma
+      trava participou - foi juizo do proprio classificador.
+      DIAGNOSTICO: cada peca fez o trabalho certo e a ROTA e que estava errada. A imagem
+      foi detectada pelo canal de IMAGEM (1.43.0); o canal de documento nao achou texto
+      ("GERANDO SEM anexo" - imagem nao tem texto extraivel); os 10 slides vieram da base
+      institucional (acervo: sim, 44.749 chars); e a imagem foi colada num slide, que e
+      exatamente a funcionalidade da 1.43.0.
+      CAUSA: o classificador e CEGO AO ANEXO. _transcript so passa TEXTO (_texto_de_msg)
+      e _msgs_com_pedido_limpo ate remove 'files'. Ele julgou "refaca o design desse
+      material" sem saber que o material era uma IMAGEM. Faltava o DADO, nao juizo -
+      a mesma classe da 1.46.0 (__files__) e da 1.47.0 (pedido escondido).
+    - FIX A (informacao): _nota_anexo injeta o TIPO do anexo no transcript do
+      classificador ("[Sistema: o usuario anexou uma IMAGEM nesta conversa.]"), no mesmo
+      padrao da ancora _ultima_foi_imagem que ja existia. Mais a regra correspondente no
+      CLASSIFICADOR: imagem + refazer/redesenhar SEM formato nomeado = 'imagem'; com
+      formato nomeado = 'arquivo'.
+    - FIX B (TRAVA 6, deterministica): categoria 'arquivo' + anexo IMAGEM + verbo de
+      transformacao + NENHUM formato de documento nomeado -> 'imagem'. E a PRIMEIRA trava
+      que resgata PARA 'imagem' e a primeira que sobrescreve 'arquivo', entao roda por
+      ULTIMO, depois das travas 4 e 5, e exige TRES sinais simultaneos. Existe porque o
+      classificador ja errou NESTE caso concreto - prompt sozinho nao e garantia.
+    - A FUNCIONALIDADE DA 1.43.0 TEM PROTECAO DUPLA e testada: "monte uma apresentacao e
+      inclua esta foto" (a) NOMEIA formato de documento e (b) "monte" nem e verbo de
+      transformacao. Qualquer uma das duas ja impede a troca de rota.
+    - FORMATO DE IMAGEM NAO E FORMATO DE DOCUMENTO: png/jpeg/foto/figura/arte/material
+      ficam de fora de _RE_FORMATO_DOC de proposito - "refaca essa imagem, mantenha png"
+      continua sendo pedido de IMAGEM.
+    - REGISTRO 1 - A PROIBICAO DE HEX NAO ERA NECESSARIA (nao repor). A instrucao "nunca
+      escreva codigos de cor" foi removida pelo dono antes de publicar, e a medicao em
+      producao confirmou: NENHUM hex desenhado na figura. A causa do vazamento era a
+      PALETA ESCRITA EM CODIGO no prompt antigo, nao a falta de proibicao. Com a paleta
+      por NOME, o problema nao existe. Nao "conserte" repondo a proibicao.
+    - REGISTRO 2 - CAMADA 2 (/images/edits) DESCARTADA POR MEDICAO, nao esquecida. Passar
+      a imagem como REFERENCIA (em vez de imagem->texto->imagem) era o maior pedaco do
+      trabalho e eliminaria a classe da perda. Medicao da 1.49.0 em producao: os CINCO
+      itens que sumiam voltaram, o logo da Nidum sobreviveu e nenhum hex apareceu - ou
+      seja, o conteudo se preservou SEM ela. Decisao: nao construir. Se aparecer caso que
+      a exija, reabrir com evidencia nova.
+    - O QUE VEIO DE ONDE (medido separado, de proposito): do MOTOR (gpt-image-2, troca de
+      configuracao) veio a grafia correta dos rotulos; do PROMPT (1.49.0) veio o conteudo
+      que voltou. O motor sozinho nao traria de volta o que a descricao nao carregava.
+      Os dois eram necessarios.
+  1.49.0:
+    - IMAGEM_PROMPT REESCRITO (redacao do dono). A antiga tinha DUAS regras que garantiam
+      perda de conteudo em material denso, e nenhuma delas era obvia:
+        "em uma unica frase"  -> limite de espaco escrito a mao. Um infografico com ~20
+                                 rotulos nao cabe em uma frase, com motor NENHUM. Um
+                                 cartaz com 6 textos coube - por isso um caso passou e o
+                                 outro nao.
+        "NAO use aspas"       -> proibia justamente o mecanismo de TRANSCREVER texto.
+      Agora: texto e ELEMENTO VISUAL como qualquer outro (titulos, rotulos, legendas,
+      numeros), transcrito entre aspas, e o comprimento e PROPORCIONAL ao conteudo.
+    - COR POR NOME, nunca por hex. Causa medida: o modelo de imagem nao interpreta
+      hexadecimal - ele DESENHA o codigo. No cartaz de cavaquinho saiu "#4F71E87" na
+      figura: sete digitos contra os seis do #4F7187 real, ou seja, ele nem copiou
+      direito - tratou como forma a desenhar, nao como instrucao de cor.
+    - QUATRO BLOCOS PRESERVADOS do prompt anterior (a redacao nova os removia junto):
+      (1) SENTINELA "SEM_IMAGEM:" - chatnd checa refinada.startswith("SEM_IMAGEM:"); sem
+          a instrucao a guarda vira CODIGO MORTO e o modelo volta a inventar em vez de
+          dizer o que falta. Ja aconteceu uma vez sem ninguem notar - agora tem teste.
+      (2) PALETA da Nidum, agora em PALAVRAS (areia clara, verde musgo acinzentado,
+          terracota, azul acinzentado suave, cinza quente, quase preto quente): tirar os
+          hex sem isto levaria as cores da marca junto.
+      (3) DEFAULT fotorrealista neutro, sem estetica corporativa salvo pedido explicito.
+      (4) MARCAS DE TERCEIROS - achada na revisao (nao estava na lista dos tres) e
+          preservada para o dono decidir. DECISAO: REMOVIDA DELIBERADAMENTE. Ela
+          atrapalhava o uso mais LEGITIMO da ferramenta - redesenhar material da PROPRIA
+          CASA e de clientes: no caso que originou este conserto o material trazia o logo
+          da Nidum e a regra mandava apaga-lo. NAO foi escrita regra nova no lugar, de
+          proposito: quem governa e "incorpore as alteracoes solicitadas e preserve o
+          restante" - marca fica por PADRAO, e quem quiser remove-la pede. ISTO NAO E
+          DESCUIDO: teste_imagem_prompt.py tem asserção INVERTIDA garantindo que a
+          proibicao nao volte sem decisao explicita.
+    - SENTINELA ROBUSTA: o resto e limpo de "<>" (o modelo pode copiar o placeholder do
+      exemplo). Conserto no CODIGO, para nao mexer na redacao aprovada.
+    - PERSISTENCIA DO ANEXO na rota de imagem (_imagens_recentes, ultimas 5 mensagens do
+      usuario). Era a Fatia 3 planejada e nunca executada: a rota olhava SO a ultima
+      mensagem, entao quem anexava a imagem num turno e pedia o ajuste no seguinte ouvia
+      "Anexe o material original" com o material ja na conversa - e o sistema gerava a
+      partir de uma descricao imaginada. NAO reusa _anexos_recentes: aquele le __files__
+      (documentos) e descarta imagens de proposito; a rota de imagem precisa dos BYTES
+      (data-URL das partes da mensagem), entao o reuso certo e _tem_anexo_imagem/
+      _extrair_imagens_anexo. LIMITE CONSCIENTE: com janela 5, imagem de 5 turnos atras
+      vira referencia mesmo se o assunto mudou - preferivel ao contrario, que e o bug.
+    - MOTOR: o dono trocou Gemini -> gpt-image-2 (config do Admin, ZERO codigo - o pipe
+      nao sabe qual motor esta atras). Medido isolado ANTES desta fatia: grafia dos
+      rotulos boa, sem hex desenhado. Isso rebaixou a regra de cor de conserto a HIGIENE
+      - ela fica porque tambem melhora a descricao, nao so evita o vazamento.
+    - MITIGACAO, NAO CURA (registrado): a causa raiz da perda e o formato imagem -> texto
+      -> imagem. Toda descricao comprime e toda compressao perde. Isto reduz a perda; so
+      passar a imagem como REFERENCIA (/images/edits) elimina a classe. Por isso medir de
+      novo agora importa: o motor ja foi medido sozinho, entao a comparacao fica limpa.
   1.48.0:
     - TERCEIRA CAUSA do mesmo incidente, achada com a 1.47.0 ja em producao: o roteamento
       passou a acertar ("classificador='arquivo'") e o canal recusou o material com
@@ -832,6 +927,13 @@ CLASSIFICADOR = (
     "'detalhe', 'e os outros?', 'liste todos') CONTINUA sendo 'documentos' - "
     "EXCETO se o pedido for para PRODUZIR/BAIXAR um arquivo, apresentacao, slides "
     "ou relatorio, que e sempre 'arquivo'.\n"
+    "Regra de contexto (anexo): o sistema pode informar o TIPO do anexo numa nota "
+    "'[Sistema: o usuario anexou ...]'. Se ele anexou uma IMAGEM e pede para REFAZER, "
+    "REDESENHAR, ajustar ou adaptar ESSE material, SEM nomear um formato de arquivo "
+    "(apresentacao/slides/pptx/docx/pdf/planilha/relatorio), a categoria e 'imagem' - "
+    "ele quer a imagem redesenhada, nao um documento. Mas se ele NOMEIA um formato "
+    "(ex.: 'monte uma apresentacao e inclua esta foto', 'gere um pptx com essa "
+    "imagem'), e 'arquivo' - a imagem entra dentro do arquivo.\n"
     "Regra de contexto (imagem): se a ULTIMA resposta do assistente foi uma IMAGEM "
     "gerada (o contexto pode indicar isso com uma nota '[Sistema: ... IMAGEM "
     "gerada ...]') e o pedido ATUAL do usuario e um AJUSTE, refino ou critica dessa "
@@ -996,33 +1098,55 @@ GERADOR = (
 )
 
 IMAGEM_PROMPT = (
-    "O usuario pediu uma imagem. Escreva APENAS a descricao visual da imagem "
-    "desejada, em uma unica frase clara e rica em detalhes visuais (cenario, "
-    "estilo, cores, iluminacao). NAO mencione formato de arquivo (jpeg/png/etc), "
-    "NAO escreva 'gere uma imagem de', NAO use aspas. "
-    "Nao aplique identidade visual, cores institucionais, branding, logo ou "
-    "layout corporativo da Nidum. Priorize realismo, qualidade fotografica, "
-    "composicao, iluminacao e fidelidade ao pedido do usuario. Por padrao, "
-    "produza uma descricao fotorrealista neutra, sem estetica corporativa. "
-    "Somente se o usuario pedir explicitamente elementos da marca (por ex., "
-    "'com as cores da Nidum', 'inclua o logo'), incorpore a paleta oficial: terracota "
-    "(#9A4A2E), musgo (#515E52), ceu (#4F7187), areia (#E5E0D5), pedra (#9D9890) e "
-    "escuro (#1F1E1B). "
-    "Se o pedido nao for uma solicitacao de imagem que possa ser criada a partir "
-    "de texto, ou se depender de um anexo/arquivo que nao foi fornecido no texto, "
-    "NAO invente uma descricao. Nesse caso responda EXATAMENTE com 'SEM_IMAGEM: ' "
-    "seguido de uma frase curta, no idioma do usuario, explicando o que falta. "
-    "Se uma imagem de referencia vier ANEXADA ao pedido, trate-a como referencia "
-    "de estilo, tema, forma ou composicao e COMBINE-A com o pedido em texto do "
-    "usuario numa unica descricao do que gerar (ex.: 'uma camisa como esta, com "
-    "tema de montanhas' -> uma camisa no estilo/forma da referencia, com o tema "
-    "pedido). NAO se limite a descrever a imagem anexada de forma literal, e NAO "
-    "reproduza marcas, logotipos, emblemas, brasoes, patches, escudos ou selos "
-    "que aparecam nela; substitua-os por superficie lisa ou por elementos do tema "
-    "pedido. Incorpore apenas o estilo, o tema ou a forma conforme o pedido. O "
-    "objetivo e nao trazer identidade visual de terceiros da imagem de referencia "
-    "para a nova peca. "
-    "Responda so com a descricao."
+    # REDACAO DO DONO (1.49.0) + quatro blocos preservados do prompt anterior.
+    # POR QUE MUDOU: a redacao antiga tinha DUAS regras que garantiam perda de conteudo
+    # em material denso - "em uma unica frase" (limite de espaco) e "NAO use aspas"
+    # (proibia justamente o mecanismo de transcrever texto). No caso real do infografico
+    # de ~20 rotulos, o que a descricao nao listava simplesmente nao existia para o motor.
+    # Agora: texto e ELEMENTO VISUAL como qualquer outro, transcrito entre aspas, e o
+    # comprimento e PROPORCIONAL ao conteudo, nao fixo.
+    "Sua tarefa e descrever, de forma objetiva e completa, a imagem que deve ser "
+    "gerada.\n\n"
+    "Quando houver imagem de referencia: analise-a junto com o pedido do usuario, "
+    "incorpore as alteracoes solicitadas e preserve o restante. Quando nao houver "
+    "referencia, descreva a imagem pedida a partir do zero.\n\n"
+    "Descreva exclusivamente os elementos visuais finais: composicao, enquadramento, "
+    "perspectiva, personagens, objetos, cenario, iluminacao, cores, texturas, "
+    "materiais, expressoes, poses, estilo artistico, nivel de detalhe e textos "
+    "visiveis (titulos, rotulos, legendas, numeros), transcritos entre aspas.\n\n"
+    # BLOCO 3 - default neutro. Sem isto o modelo corporativiza toda imagem.
+    "Por padrao, gere descricao fotorrealista e neutra, sem estetica corporativa e "
+    "sem elementos de marca. Aplique identidade visual apenas quando o usuario pedir "
+    "explicitamente.\n\n"
+    "Cores: descreva por nome e aparencia (\"areia clara\", \"verde musgo "
+    "acinzentado\", \"terracota\"), nunca por codigo hexadecimal - o modelo desenha o "
+    "codigo como texto na figura.\n\n"
+    # BLOCO 2 - a paleta segue existindo, em PALAVRAS. Tirar os hex sem isto levaria as
+    # cores da marca junto: "com as cores da Nidum" viraria cor aleatoria.
+    "Quando o usuario pedir a identidade visual da Nidum, use a paleta da marca, "
+    "sempre por nome: areia clara (fundo dominante), verde musgo acinzentado (titulos "
+    "e blocos), terracota (cor de acento), azul acinzentado suave (blocos e respiro), "
+    "cinza quente (filetes e bordas) e quase preto quente (textos).\n\n"
+    "Nao explique seu raciocinio, nao faca comentarios, nao cite a imagem original, "
+    "nao use listas nem markdown. Retorne apenas uma descricao continua, pronta para "
+    "um modelo de geracao de imagens.\n\n"
+    "O comprimento deve ser proporcional ao conteudo: uma cena simples cabe em poucas "
+    "linhas; um material com muitos elementos exige descricao mais longa.\n\n"
+    # AQUI HAVIA a proibicao de reproduzir marcas/logotipos/selos da referencia.
+    # REMOVIDA DELIBERADAMENTE (decisao do dono, 1.49.0) - NAO e descuido, NAO reponha.
+    # Motivo: ela atrapalhava o uso mais LEGITIMO da ferramenta - redesenhar material da
+    # PROPRIA CASA e de clientes. No caso que originou este conserto, o material trazia
+    # o logo da Nidum e a regra mandava apaga-lo.
+    # Nada foi escrito no lugar, de proposito: quem governa e "incorpore as alteracoes
+    # solicitadas e preserve o restante" (acima) - marca e preservada por PADRAO, e quem
+    # quiser remove-la pede. teste_imagem_prompt.py garante que a proibicao nao volte.
+    # BLOCO 1 - SENTINELA. chatnd.py checa refinada.startswith("SEM_IMAGEM:"); sem esta
+    # instrucao a guarda vira codigo morto e o modelo INVENTA em vez de dizer o que
+    # falta - a falha silenciosa que este projeto inteiro vem cacando.
+    "Se o pedido nao puder ser transformado em imagem - falta a imagem de referencia "
+    "que o usuario mencionou, ou o pedido e vago demais para descrever visualmente - "
+    "NAO invente uma descricao. Responda apenas:\n"
+    "SEM_IMAGEM: diga em uma frase o que falta ou o que precisa ser esclarecido"
 )
 
 VOZ_TRIADE = (
@@ -1564,6 +1688,69 @@ def _texto_usuario_limpo(metadata, fallback=""):
     if isinstance(limpo, str) and limpo.strip():
         return limpo
     return fallback
+
+
+_RE_FORMATO_DOC = re.compile(
+    r"\b(?:pptx?|power\s?point|apresentacao|apresentacoes|slides?|deck|"
+    r"docx?|word|xlsx?|excel|planilhas?|relatorios?|pdf|"
+    r"html|pagina\s+web|site|documento)\b",
+    re.IGNORECASE,
+)
+
+
+def _nomeia_formato_documento(texto):
+    # PURA. True se o usuario NOMEOU um formato de ARQUIVO entregavel. Formatos de
+    # IMAGEM (png/jpeg/foto) de proposito NAO entram: "refaca essa imagem, mantenha png"
+    # continua sendo pedido de imagem, nao de documento.
+    return bool(_RE_FORMATO_DOC.search(_normalizar_ascii(texto or "")))
+
+
+def _nota_anexo(tem_imagem, nomes_docs):
+    # Nota deterministica para o CLASSIFICADOR. Ele so recebe TEXTO (_transcript usa
+    # _texto_de_msg, e _msgs_com_pedido_limpo ate remove 'files'), entao era CEGO ao
+    # anexo: no bug real ele julgou "refaca o design desse material" com uma IMAGEM
+    # anexada e respondeu 'arquivo', montando um PPTX de 10 slides com a imagem colada
+    # dentro. Comportamento coerente, rota errada - faltava o dado, nao juizo.
+    # Mesmo padrao da ancora _ultima_foi_imagem, que ja existia logo abaixo.
+    if tem_imagem and nomes_docs:
+        return ("[Sistema: o usuario anexou UMA IMAGEM e tambem %d documento(s): %s.]"
+                % (len(nomes_docs), ", ".join(nomes_docs[:3])))
+    if tem_imagem:
+        return "[Sistema: o usuario anexou uma IMAGEM nesta conversa.]"
+    if nomes_docs:
+        return ("[Sistema: o usuario anexou %d documento(s) de texto: %s.]"
+                % (len(nomes_docs), ", ".join(nomes_docs[:3])))
+    return ""
+
+
+def _imagens_recentes(messages, n=5):
+    # PERSISTENCIA DO ANEXO NA ROTA DE IMAGEM (1.49.0). Devolve (tem_anexo, urls) do
+    # anexo de imagem MAIS RECENTE nas ultimas n mensagens do usuario.
+    #
+    # BUG QUE CONSERTA: a rota olhava SO a ultima mensagem (_ultima_msg_usuario). Quem
+    # anexava a imagem num turno e pedia o ajuste no seguinte ouvia "Anexe o material
+    # original" com o material ja na conversa - e o sistema gerava a partir de uma
+    # descricao imaginada, sem nunca ter visto o original.
+    #
+    # NAO reusa _anexos_recentes: aquele le a lista de __files__ (documentos) e DESCARTA
+    # imagens de proposito (_eh_imagem), porque a rota de imagem precisa dos BYTES
+    # (data-URL nas partes da mensagem), nao do texto extraido. O reuso certo aqui e o
+    # par _tem_anexo_imagem/_extrair_imagens_anexo, que ja existe e ja e testado.
+    #
+    # LIMITE CONSCIENTE: com n=5, uma imagem anexada ha 5 turnos vira referencia mesmo se
+    # o assunto mudou. Preferimos isso ao contrario (ignorar o anexo que esta ali), que e
+    # o bug que estamos consertando. Se incomodar, o sinal para estreitar existe:
+    # _ultima_foi_imagem/_descricao_imagem_anterior.
+    vistas = 0
+    for m in reversed(messages or []):
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        vistas += 1
+        if vistas > max(1, n):
+            break
+        if _tem_anexo_imagem(m):
+            return True, _extrair_imagens_anexo(m)
+    return False, []
 
 
 def _msgs_com_pedido_limpo(messages, limpo):
@@ -2245,8 +2432,11 @@ class Pipe:
         self._tool_cache = None
         self._tool_lock = asyncio.Lock()
 
-    async def _classificar(self, request, user, messages):
+    async def _classificar(self, request, user, messages, nota_anexo=""):
         transcript = _transcript(messages, 6)[:4000]
+        # FIX A (1.50.0): o TIPO do anexo entra no julgamento. Ver _nota_anexo.
+        if nota_anexo:
+            transcript = nota_anexo + "\n" + transcript
         # C1: ancora deterministica - se o ultimo turno do assistente foi uma
         # imagem gerada (marcador EXATO), avisa o classificador para ele poder
         # aplicar a regra de ajuste de imagem. Nao depende do transcript truncado.
@@ -3039,7 +3229,7 @@ class Pipe:
         # o motor de imagem.
         refinada = prompt_visual.strip()
         if refinada.startswith("SEM_IMAGEM:"):
-            resto = refinada[len("SEM_IMAGEM:"):].strip()
+            resto = refinada[len("SEM_IMAGEM:"):].strip().strip("<>").strip()
             return resto or "Descreva a imagem que voce quer gerar."
 
         if not prompt_visual:
@@ -3157,8 +3347,12 @@ class Pipe:
             categoria = "geral"
         else:
             try:
+                _tem_img_cls, _ = _imagens_recentes(body.get("messages"), 5)
+                _nota = _nota_anexo(
+                    _tem_img_cls, [a["nome"] for a in _anexos_recentes(_files)]
+                )
                 saida = await self._classificar(
-                    __request__, user, _msgs_rota
+                    __request__, user, _msgs_rota, _nota
                 )
                 for chave in ["imagem", "arquivo", "documentos", "geral"]:
                     if chave in saida:
@@ -3243,6 +3437,31 @@ class Pipe:
                 )
                 categoria = "arquivo"
 
+        # TRAVA 6 (1.50.0) - IMAGEM ANEXADA + TRANSFORMACAO -> rota 'imagem'.
+        # Bug real: uma IMAGEM anexada + "refaca o design desse material" foi classificada
+        # como 'arquivo' (juizo do proprio classificador, sem trava nenhuma) e o sistema
+        # montou um PPTX de 10 slides da base institucional com a imagem colada dentro.
+        # Cada peca fez o certo; a ROTA e que estava errada.
+        #
+        # E a PRIMEIRA trava que resgata PARA 'imagem' e a primeira que sobrescreve
+        # 'arquivo' - por isso roda por ULTIMO, depois das travas 4 e 5, e exige TRES
+        # sinais simultaneos:
+        #   1. o anexo e IMAGEM (nao documento - documento continua indo para arquivo);
+        #   2. o pedido e de TRANSFORMACAO (_pede_transformacao);
+        #   3. NENHUM formato de documento foi nomeado.
+        # O sinal 3 e o que protege a funcionalidade validada da 1.43.0: "monte uma
+        # apresentacao e inclua esta foto" nomeia formato -> NAO entra aqui. E ela tem
+        # dupla protecao, porque "monte" tambem nao e verbo de transformacao.
+        if categoria == "arquivo" and _pede_transformacao(texto):
+            if not _nomeia_formato_documento(texto):
+                _tem_img, _ = _imagens_recentes(body.get("messages"), 5)
+                if _tem_img and not _anexos_recentes(_files):
+                    log.info(
+                        "chatnd: trava 'imagem anexada + transformacao' -> arquivo "
+                        "vira imagem (nenhum formato de documento nomeado)"
+                    )
+                    categoria = "imagem"
+
         log.info(
             "chatnd: roteador -> %s (classificador=%r)", categoria, saida or "(atalho)"
         )
@@ -3269,11 +3488,12 @@ class Pipe:
         if categoria == "imagem":
             try:
                 _msgs = body.get("messages")
-                _msg_user = _ultima_msg_usuario(_msgs)
-                tem_anexo_imagem = _tem_anexo_imagem(_msg_user)
-                imagens_ref = (
-                    _extrair_imagens_anexo(_msg_user) if tem_anexo_imagem else []
-                )
+                tem_anexo_imagem, imagens_ref = _imagens_recentes(_msgs, 5)
+                if tem_anexo_imagem:
+                    log.info(
+                        "chatnd: rota imagem COM referencia -> %d imagem(ns) "
+                        "(olhando as 5 ultimas mensagens do usuario)", len(imagens_ref),
+                    )
                 # C2: contexto recente do usuario (tema persiste) + descricao da
                 # imagem anterior (revisao), recuperada da mensagem CRUA. Se o
                 # ultimo turno nao foi imagem, descricao_anterior fica vazia.
