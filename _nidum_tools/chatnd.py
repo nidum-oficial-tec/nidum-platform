@@ -26,9 +26,15 @@ changelog:
           terracota, azul acinzentado suave, cinza quente, quase preto quente): tirar os
           hex sem isto levaria as cores da marca junto.
       (3) DEFAULT fotorrealista neutro, sem estetica corporativa salvo pedido explicito.
-      (4) MARCAS DE TERCEIROS - nao reproduzir logo/emblema/selo que apareca na
-          referencia. Regra de risco JURIDICO, nao de estilo; nao estava na lista dos
-          tres e teria sumido em silencio.
+      (4) MARCAS DE TERCEIROS - achada na revisao (nao estava na lista dos tres) e
+          preservada para o dono decidir. DECISAO: REMOVIDA DELIBERADAMENTE. Ela
+          atrapalhava o uso mais LEGITIMO da ferramenta - redesenhar material da PROPRIA
+          CASA e de clientes: no caso que originou este conserto o material trazia o logo
+          da Nidum e a regra mandava apaga-lo. NAO foi escrita regra nova no lugar, de
+          proposito: quem governa e "incorpore as alteracoes solicitadas e preserve o
+          restante" - marca fica por PADRAO, e quem quiser remove-la pede. ISTO NAO E
+          DESCUIDO: teste_imagem_prompt.py tem asserção INVERTIDA garantindo que a
+          proibicao nao volte sem decisao explicita.
     - SENTINELA ROBUSTA: o resto e limpo de "<>" (o modelo pode copiar o placeholder do
       exemplo). Conserto no CODIGO, para nao mexer na redacao aprovada.
     - PERSISTENCIA DO ANEXO na rota de imagem (_imagens_recentes, ultimas 5 mensagens do
@@ -1074,13 +1080,14 @@ IMAGEM_PROMPT = (
     "um modelo de geracao de imagens.\n\n"
     "O comprimento deve ser proporcional ao conteudo: uma cena simples cabe em poucas "
     "linhas; um material com muitos elementos exige descricao mais longa.\n\n"
-    # BLOCO 4 (preservado do prompt anterior, redacao original) - marcas de TERCEIROS.
-    # Nao estava na lista dos tres, mas a redacao nova o removia junto: e regra de risco
-    # juridico, nao de estilo. Vale tanto para referencia quanto para geracao do zero.
-    "NAO reproduza marcas, logotipos, emblemas, brasoes, patches, escudos ou selos de "
-    "terceiros que aparecam na referencia; substitua-os por superficie lisa ou por "
-    "elementos do tema pedido. O objetivo e nao trazer identidade visual de terceiros "
-    "para a nova peca.\n\n"
+    # AQUI HAVIA a proibicao de reproduzir marcas/logotipos/selos da referencia.
+    # REMOVIDA DELIBERADAMENTE (decisao do dono, 1.49.0) - NAO e descuido, NAO reponha.
+    # Motivo: ela atrapalhava o uso mais LEGITIMO da ferramenta - redesenhar material da
+    # PROPRIA CASA e de clientes. No caso que originou este conserto, o material trazia
+    # o logo da Nidum e a regra mandava apaga-lo.
+    # Nada foi escrito no lugar, de proposito: quem governa e "incorpore as alteracoes
+    # solicitadas e preserve o restante" (acima) - marca e preservada por PADRAO, e quem
+    # quiser remove-la pede. teste_imagem_prompt.py garante que a proibicao nao volte.
     # BLOCO 1 - SENTINELA. chatnd.py checa refinada.startswith("SEM_IMAGEM:"); sem esta
     # instrucao a guarda vira codigo morto e o modelo INVENTA em vez de dizer o que
     # falta - a falha silenciosa que este projeto inteiro vem cacando.

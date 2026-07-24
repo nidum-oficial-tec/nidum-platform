@@ -107,9 +107,17 @@ def main():
     ok &= check("comprimento e PROPORCIONAL ao conteudo",
                 "proporcional ao conteudo" in P)
 
-    print("== marcas de TERCEIROS (regra de risco juridico, preservada) ==")
-    ok &= check("proibe reproduzir marca/logo de terceiros",
-                "NAO reproduza marcas" in P and "terceiros" in P)
+    print("== marcas: a proibicao foi REMOVIDA por decisao do dono ==")
+    # INVERTIDO DE PROPOSITO. A clausula existia e foi tirada porque atrapalhava o uso
+    # mais legitimo: redesenhar material da propria casa (o caso real trazia o logo da
+    # Nidum e a regra mandava apaga-lo). Este teste existe para ela nao VOLTAR sem
+    # decisao explicita - quem ler o codigo daqui a meses pode achar que foi descuido.
+    ok &= check("o prompt NAO proibe reproduzir marcas/logos",
+                "NAO reproduza marcas" not in P)
+    ok &= check("nao entrou regra nova de marca no lugar",
+                "logotipo" not in P.lower() and "emblema" not in P.lower())
+    ok &= check("quem governa e 'preserve o restante' (marca sobrevive por padrao)",
+                "preserve o restante" in P)
 
     print("== ASCII (regra do repo) ==")
     ok &= check("IMAGEM_PROMPT e 100% ASCII",
