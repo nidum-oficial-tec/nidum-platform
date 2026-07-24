@@ -1,9 +1,33 @@
 """
 title: ChatND
 author: Nidum
-version: 1.45.0
+version: 1.46.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.46.0:
+    - BUG CRITICO: o conserto 1.44/1.45 estava INERTE em producao (achado por teste real do
+      dono: 3 PPTX anexados + "mantenha o conteudo original e refaca os slides no padrao
+      Nidum" -> rota Documentos, quando a TRAVA 5 deveria ter disparado).
+      CAUSA: o pipe lia body['metadata']['files'], mas o Open WebUI faz
+      form_data.pop('metadata') ANTES de montar o body do pipe (functions.py:209) e so
+      repassa os extra_params que o pipe DECLARA na assinatura (functions.py:194). Como
+      pipe() nao declarava __files__ nem __metadata__, body['metadata'] NAO EXISTIA:
+      _anexos_recentes devolvia [] SEMPRE. Efeito em cascata: TRAVA 5 morta, canal de
+      transformacao morto, _texto_usuario_limpo caindo no fallback, _chars_injetados=0 -
+      tudo com APARENCIA de publicado e funcionando.
+      LICAO REPETIDA: e a mesma da 1.32.0 com __task__ ("o pipe so precisava DECLARAR o
+      parametro"). Os anexos vem em extra_params['__files__'] (functions.py:260) e o
+      metadata em '__metadata__' (:262).
+      FIX: pipe() declara __files__ e __metadata__; as funcoes viraram PURAS sobre a lista/
+      dict (nao mais sobre o body), com fallback ao body para chamadas que nao passam por
+      functions.py. Teste de regressao que teria pego: assinatura do pipe + rejeicao da
+      forma antiga (dict) + o caso de producao reproduzido (3 anexos + a frase exata).
+    - TRAVA 4 ganha a FAMILIA DE TRANSFORMACAO (tapa-buraco do caso SEM anexo): refaca/
+      refaz/refazer/redesenhe/reformule/reescreva/adapte/atualize. A esteira de verbos e
+      real e previsivel - a 1.40.0 acrescentou transforme/converta/passe/vira e "refaca"
+      mordeu depois; estes cobrem a proxima volta ANTES de ela morder. O segundo sinal que
+      impede sequestro de conversa continua sendo o SUBSTANTIVO de arquivo exigido perto:
+      "refaca os SLIDES" entra, "refaca esse paragrafo" nao. 10 casos novos em teste.
   1.45.0:
     - FALHAR EM VOZ ALTA (Fatia 2 - o cinto de seguranca da 1.44.0). Sobe JUNTO com ela:
       a 1.44.0 sozinha faria o documento inteiro entrar no contexto sem rede.
@@ -1351,20 +1375,24 @@ def _nota_imagens(n):
 # dependencia nova. Basta ler o campo que o pipe nunca leu.
 
 
-def _anexos_recentes(body, messages=None, n=5):
+def _anexos_recentes(files, messages=None, n=5):
     # Devolve TODOS os anexos de texto com conteudo, na ordem em que o usuario anexou:
     # [{"nome","conteudo","chars"}]. Fonte primaria: body['metadata']['files'] (onde o
     # OWUI poe os anexos do turno). PLURAL de proposito: o caso real que originou isto
     # tinha TRES arquivos; pegar um e ignorar os outros em silencio e a mesma familia de
     # falha muda que estamos consertando. Quem nao couber e RELATADO, nunca descartado.
     #
+    # RECEBE A LISTA PRONTA (nao o body). Motivo, aprendido com um bug em producao: o
+    # Open WebUI faz form_data.pop('metadata') ANTES de montar o body do pipe
+    # (functions.py:209), entao body['metadata'] NAO EXISTE aqui dentro. Os anexos chegam
+    # por extra_params['__files__'] (functions.py:260) - e extra_params so e repassado ao
+    # pipe que DECLARA o parametro na assinatura (functions.py:194). Quem extrai e o
+    # pipe(); esta funcao fica pura sobre a lista.
+    #
     # 'messages'/'n' ficam para a fatia de persistencia (anexo de turnos anteriores);
-    # hoje o metadata do turno ja cobre o caso corrente.
+    # hoje os files do turno ja cobrem o caso corrente.
     saida = []
-    try:
-        itens = ((body or {}).get("metadata") or {}).get("files") or []
-    except Exception:
-        return []
+    itens = files if isinstance(files, list) else []
     for it in itens:
         if not isinstance(it, dict):
             continue
@@ -1439,7 +1467,7 @@ def _cortar_em_blocos(texto, teto):
     return [b for b in blocos if b]
 
 
-def _texto_usuario_limpo(body, fallback=""):
+def _texto_usuario_limpo(metadata, fallback=""):
     # O texto do usuario SEM as tags <source> que o OWUI colou na mensagem.
     # NAO usa regex: o proprio OWUI salva o pedido pristino em metadata['user_prompt'],
     # ANTES da injecao (middleware.py:2901 salva; :2906 injeta - o comentario de la diz
@@ -1447,8 +1475,9 @@ def _texto_usuario_limpo(body, fallback=""):
     # injecao com expressao regular arriscaria mutilar o PEDIDO junto com o contexto.
     # REGRA CONSERVADORA: se o campo nao vier, devolve o fallback SEM mexer - pagamos os
     # chunks a mais, que e o erro barato; corromper o pedido e o erro caro.
+    # Recebe o METADATA (via __metadata__), nao o body - ver a nota em _anexos_recentes.
     try:
-        limpo = ((body or {}).get("metadata") or {}).get("user_prompt")
+        limpo = (metadata or {}).get("user_prompt")
     except Exception:
         limpo = None
     if isinstance(limpo, str) and limpo.strip():
@@ -1456,11 +1485,11 @@ def _texto_usuario_limpo(body, fallback=""):
     return fallback
 
 
-def _chars_injetados(body):
+def _chars_injetados(metadata):
     # Quanto o OWUI ja injetou de <source> neste turno (para o log honesto de orcamento).
     # Lido de metadata['sources'] - o mesmo objeto que ele injetou, sem adivinhacao.
     try:
-        fontes = ((body or {}).get("metadata") or {}).get("sources") or []
+        fontes = (metadata or {}).get("sources") or []
     except Exception:
         return 0
     total = 0
@@ -1956,6 +1985,15 @@ _VERBO_PRODUZIR = (
     r"faca|facam|fazer|fazendo|prepara|prepare|preparar|produz|produza|produzir|"
     r"transforma|transforme|transformar|converta|converte|converter|"
     r"exporta|exporte|exportar|salva|salve|salvar|baixa|baixe|baixar|"
+    # FAMILIA DE TRANSFORMACAO (1.46.0). A esteira de verbos e real e previsivel: a
+    # 1.40.0 acrescentou transforme/converta/passe/vira e "refaca" mordeu depois. Estes
+    # cobrem a proxima volta (adapte/reformule/reescreva) ANTES de ela morder. Aqui, ao
+    # contrario da TRAVA 5, NAO ha anexo como segundo sinal - quem segura o sequestro de
+    # conversa comum e o SUBSTANTIVO de arquivo que o _RE_PEDE_ARQUIVO exige perto:
+    # "refaca os SLIDES" entra; "refaca esse paragrafo" NAO (nao ha substantivo).
+    r"refaca|refacam|refaz|refazer|redesenha|redesenhe|redesenhar|"
+    r"reformula|reformule|reformular|reescreva|reescreve|reescrever|"
+    r"adapta|adapte|adaptar|atualiza|atualize|atualizar|"
     r"passa|passe|passar|vira|virar)"
 )
 _SUBST_ARQUIVO = (
@@ -2868,8 +2906,21 @@ class Pipe:
                 log.exception("chatnd: falha ao emitir status")
 
     async def pipe(self, body, __user__, __request__, __event_emitter__=None,
-                   __task__=None):
+                   __task__=None, __files__=None, __metadata__=None):
+        # __files__ / __metadata__ (1.46.0): DECLARAR e obrigatorio para receber.
+        # BUG DE PRODUCAO que isto conserta: o pipe lia body['metadata']['files'], mas o
+        # Open WebUI faz form_data.pop('metadata') ANTES de montar o body (functions.py:
+        # 209) e so repassa extra_params que o pipe DECLARA (functions.py:194). Resultado:
+        # body['metadata'] nao existia, _anexos_recentes devolvia [] SEMPRE, a TRAVA 5
+        # nunca disparava e o canal de transformacao (1.44/1.45) ficava INERTE - com
+        # aparencia de publicado. Mesma licao do __task__ na 1.32.0: "o pipe so precisava
+        # DECLARAR o parametro".
         user = await Users.get_user_by_id(__user__["id"])
+        # Fallback ao body para caminhos que nao passam por functions.py (API direta).
+        _meta = __metadata__ if isinstance(__metadata__, dict) else (
+            (body or {}).get("metadata") or {}
+        )
+        _files = __files__ if isinstance(__files__, list) else (_meta.get("files") or [])
 
         # ---------------------------------------------------------------------
         # TAREFA INTERNA -> sai ANTES do roteador e do RAG (1.32.0).
@@ -3011,7 +3062,7 @@ class Pipe:
         # nao tem nenhum, e escapava. O SEGUNDO SINAL (anexo com texto no turno) e o que
         # torna isto seguro: _pede_transformacao sozinho seria amplo demais.
         if categoria in ("documentos", "geral") and _pede_transformacao(texto):
-            if _anexos_recentes(body):
+            if _anexos_recentes(_files):
                 log.info(
                     "chatnd: trava 'anexo + transformacao' -> %s vira arquivo", categoria
                 )
@@ -3085,7 +3136,7 @@ class Pipe:
                         len(imagens_anexo),
                     )
                 # CANAL 'TRANSFORMAR' (1.44.0): o anexo do usuario, INTEIRO.
-                todos = _anexos_recentes(body)
+                todos = _anexos_recentes(_files)
                 anexos = [a for a in todos if a["legivel"]]
                 ilegiveis = [a for a in todos if not a["legivel"]]
                 aviso_ilegiveis = ""
@@ -3143,7 +3194,7 @@ class Pipe:
                     original = _bloco_original(anexos)
                     # Texto do usuario SEM as <source> que o OWUI colou (metadata.
                     # user_prompt, pristino). Sem isso, pagariamos chunks + inteiro.
-                    limpo = _texto_usuario_limpo(body, "")
+                    limpo = _texto_usuario_limpo(_meta, "")
                     if limpo:
                         msgs = _msgs_sem_imagem(msgs)
                         for i in range(len(msgs) - 1, -1, -1):
@@ -3154,7 +3205,7 @@ class Pipe:
                     log.info(
                         "chatnd: rota arquivo COM anexo -> %d arquivo(s)/%d chars "
                         "(teto %d) | chunks do OWUI descartados: %d | pedido limpo: %s",
-                        len(anexos), soma, teto, _chars_injetados(body),
+                        len(anexos), soma, teto, _chars_injetados(_meta),
                         "sim" if limpo else "NAO (mantido como veio)",
                     )
                 # ACERVO CONDICIONAL: com anexo a transformar, a fonte de verdade e o
