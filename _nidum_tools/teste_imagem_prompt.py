@@ -22,7 +22,9 @@ import teste_estrutura as E
 _DIR = os.path.dirname(os.path.abspath(__file__))
 CAM = os.path.join(_DIR, "chatnd.py")
 
-FUNCOES = ("_imagens_recentes", "_tem_anexo_imagem", "_extrair_imagens_anexo")
+FUNCOES = ("_imagens_recentes", "_tem_anexo_imagem", "_extrair_imagens_anexo",
+           "_nomeia_formato_documento", "_normalizar_ascii", "_pede_transformacao",
+           "_nota_anexo")
 
 
 def check(nome, cond):
@@ -32,10 +34,12 @@ def check(nome, cond):
 
 def carregar():
     fonte = open(CAM, encoding="utf-8").read()
-    ns = {"re": re}
+    ns = {"re": re, "unicodedata": __import__("unicodedata")}
     for nome in FUNCOES:
         m = re.search(r"^def " + nome + r"\(.*?(?=^\S)", fonte, re.M | re.S)
         exec(m.group(0), ns)
+    m = re.search(r"^_RE_FORMATO_DOC = re\.compile\(.*?^\)", fonte, re.M | re.S)
+    exec(m.group(0), ns)
     m = re.search(r"^IMAGEM_PROMPT = \(.*?^\)", fonte, re.M | re.S)
     exec(m.group(0), ns)
     return ns, fonte
@@ -152,6 +156,63 @@ def main():
     ok &= check("fora da janela de 5 -> nao pega (limite consciente)",
                 IMGS(longe, 5) == (False, []))
     ok &= check("dentro de uma janela maior, pega", IMGS(longe, 9)[0] is True)
+
+    print("== TRAVA 6: imagem anexada + transformacao -> rota imagem ==")
+    FMT = ns["_nomeia_formato_documento"]
+    TRANSF = ns["_pede_transformacao"]
+    NOTA = ns["_nota_anexo"]
+
+    def rota(texto, tem_img, tem_doc, cls="arquivo"):
+        # Reproduz a TRAVA 6 exatamente como esta no pipe.
+        cat = cls
+        if cat == "arquivo" and TRANSF(texto) and not FMT(texto):
+            if tem_img and not tem_doc:
+                cat = "imagem"
+        return cat
+
+    # Os seis casos pedidos pelo dono
+    casos = [
+        ("refaca o design desse material", True, False, "imagem", "O CASO QUE FALHOU"),
+        ("refaca o design dessa imagem, mantenha png ou jpeg", True, False, "imagem",
+         "formato de IMAGEM nao conta como documento"),
+        ("monte uma apresentacao e inclua esta foto", True, False, "arquivo",
+         "1.43.0 NAO regride"),
+        ("gere um pptx com essa imagem", True, False, "arquivo", "formato nomeado"),
+        ("refaca este material", False, True, "arquivo", "documento continua em arquivo"),
+        ("monte um relatorio sobre a Nidum", False, False, "arquivo", "sem anexo, como hoje"),
+    ]
+    for texto, img, doc, esperado, motivo in casos:
+        r = rota(texto, img, doc)
+        ok &= check("%-52r -> %-8s (%s)" % (texto[:50], r, motivo), r == esperado)
+
+    print("== a protecao da 1.43.0 e DUPLA (formato E verbo) ==")
+    ok &= check("'monte uma apresentacao...' nomeia formato", FMT("monte uma apresentacao e inclua esta foto"))
+    ok &= check("'monte' tambem NAO e verbo de transformacao",
+                not TRANSF("monte uma apresentacao e inclua esta foto"))
+
+    print("== formatos: documento sim, imagem nao ==")
+    for f in ("pptx", "apresentacao", "slides", "deck", "docx", "word", "pdf",
+              "planilha", "relatorio", "excel", "html", "site", "documento"):
+        ok &= check("formato de DOCUMENTO: %r" % f, FMT("faca um " + f + " disso"))
+    for f in ("png", "jpeg", "jpg", "foto", "imagem", "figura", "material", "arte"):
+        ok &= check("NAO e formato de documento: %r" % f, not FMT("refaca esse " + f))
+
+    print("== nota do anexo para o classificador (FIX A) ==")
+    ok &= check("imagem -> nota diz IMAGEM", "IMAGEM" in NOTA(True, []))
+    ok &= check("documento -> nota diz documento", "documento" in NOTA(False, ["a.pptx"]))
+    ok &= check("nota cita o nome do documento", "a.pptx" in NOTA(False, ["a.pptx"]))
+    ok &= check("os dois -> nota cita ambos",
+                "IMAGEM" in NOTA(True, ["a.pptx"]) and "documento" in NOTA(True, ["a.pptx"]))
+    ok &= check("sem anexo -> nota vazia (nao polui o transcript)", NOTA(False, []) == "")
+
+    print("== fiacao da TRAVA 6 ==")
+    ok &= check("o classificador recebe a nota do anexo",
+                E.chamada_com(fonte, "self._classificar", "_nota"))
+    ok &= check("a trava exige os TRES sinais",
+                E.chamada_com(fonte, "_nomeia_formato_documento", "texto")
+                and E.chamada_com(fonte, "_pede_transformacao", "texto"))
+    ok &= check("a regra do anexo esta no prompt do classificador",
+                "anexou uma IMAGEM e pede para REFAZER" in fonte)
 
     print("== fiacao ==")
     ok &= check("a rota de imagem usa a busca em N mensagens",

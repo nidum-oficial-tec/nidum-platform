@@ -1,9 +1,54 @@
 """
 title: ChatND
 author: Nidum
-version: 1.49.0
+version: 1.50.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.50.0:
+    - ROTA ERRADA com IMAGEM anexada. Bug real: uma imagem + "refaca o design desse
+      material, mantendo o conteudo" gerou uma APRESENTACAO PPTX de ~10 slides, com a
+      imagem original embutida intacta num deles. Log: classificador='arquivo', nenhuma
+      trava participou - foi juizo do proprio classificador.
+      DIAGNOSTICO: cada peca fez o trabalho certo e a ROTA e que estava errada. A imagem
+      foi detectada pelo canal de IMAGEM (1.43.0); o canal de documento nao achou texto
+      ("GERANDO SEM anexo" - imagem nao tem texto extraivel); os 10 slides vieram da base
+      institucional (acervo: sim, 44.749 chars); e a imagem foi colada num slide, que e
+      exatamente a funcionalidade da 1.43.0.
+      CAUSA: o classificador e CEGO AO ANEXO. _transcript so passa TEXTO (_texto_de_msg)
+      e _msgs_com_pedido_limpo ate remove 'files'. Ele julgou "refaca o design desse
+      material" sem saber que o material era uma IMAGEM. Faltava o DADO, nao juizo -
+      a mesma classe da 1.46.0 (__files__) e da 1.47.0 (pedido escondido).
+    - FIX A (informacao): _nota_anexo injeta o TIPO do anexo no transcript do
+      classificador ("[Sistema: o usuario anexou uma IMAGEM nesta conversa.]"), no mesmo
+      padrao da ancora _ultima_foi_imagem que ja existia. Mais a regra correspondente no
+      CLASSIFICADOR: imagem + refazer/redesenhar SEM formato nomeado = 'imagem'; com
+      formato nomeado = 'arquivo'.
+    - FIX B (TRAVA 6, deterministica): categoria 'arquivo' + anexo IMAGEM + verbo de
+      transformacao + NENHUM formato de documento nomeado -> 'imagem'. E a PRIMEIRA trava
+      que resgata PARA 'imagem' e a primeira que sobrescreve 'arquivo', entao roda por
+      ULTIMO, depois das travas 4 e 5, e exige TRES sinais simultaneos. Existe porque o
+      classificador ja errou NESTE caso concreto - prompt sozinho nao e garantia.
+    - A FUNCIONALIDADE DA 1.43.0 TEM PROTECAO DUPLA e testada: "monte uma apresentacao e
+      inclua esta foto" (a) NOMEIA formato de documento e (b) "monte" nem e verbo de
+      transformacao. Qualquer uma das duas ja impede a troca de rota.
+    - FORMATO DE IMAGEM NAO E FORMATO DE DOCUMENTO: png/jpeg/foto/figura/arte/material
+      ficam de fora de _RE_FORMATO_DOC de proposito - "refaca essa imagem, mantenha png"
+      continua sendo pedido de IMAGEM.
+    - REGISTRO 1 - A PROIBICAO DE HEX NAO ERA NECESSARIA (nao repor). A instrucao "nunca
+      escreva codigos de cor" foi removida pelo dono antes de publicar, e a medicao em
+      producao confirmou: NENHUM hex desenhado na figura. A causa do vazamento era a
+      PALETA ESCRITA EM CODIGO no prompt antigo, nao a falta de proibicao. Com a paleta
+      por NOME, o problema nao existe. Nao "conserte" repondo a proibicao.
+    - REGISTRO 2 - CAMADA 2 (/images/edits) DESCARTADA POR MEDICAO, nao esquecida. Passar
+      a imagem como REFERENCIA (em vez de imagem->texto->imagem) era o maior pedaco do
+      trabalho e eliminaria a classe da perda. Medicao da 1.49.0 em producao: os CINCO
+      itens que sumiam voltaram, o logo da Nidum sobreviveu e nenhum hex apareceu - ou
+      seja, o conteudo se preservou SEM ela. Decisao: nao construir. Se aparecer caso que
+      a exija, reabrir com evidencia nova.
+    - O QUE VEIO DE ONDE (medido separado, de proposito): do MOTOR (gpt-image-2, troca de
+      configuracao) veio a grafia correta dos rotulos; do PROMPT (1.49.0) veio o conteudo
+      que voltou. O motor sozinho nao traria de volta o que a descricao nao carregava.
+      Os dois eram necessarios.
   1.49.0:
     - IMAGEM_PROMPT REESCRITO (redacao do dono). A antiga tinha DUAS regras que garantiam
       perda de conteudo em material denso, e nenhuma delas era obvia:
@@ -882,6 +927,13 @@ CLASSIFICADOR = (
     "'detalhe', 'e os outros?', 'liste todos') CONTINUA sendo 'documentos' - "
     "EXCETO se o pedido for para PRODUZIR/BAIXAR um arquivo, apresentacao, slides "
     "ou relatorio, que e sempre 'arquivo'.\n"
+    "Regra de contexto (anexo): o sistema pode informar o TIPO do anexo numa nota "
+    "'[Sistema: o usuario anexou ...]'. Se ele anexou uma IMAGEM e pede para REFAZER, "
+    "REDESENHAR, ajustar ou adaptar ESSE material, SEM nomear um formato de arquivo "
+    "(apresentacao/slides/pptx/docx/pdf/planilha/relatorio), a categoria e 'imagem' - "
+    "ele quer a imagem redesenhada, nao um documento. Mas se ele NOMEIA um formato "
+    "(ex.: 'monte uma apresentacao e inclua esta foto', 'gere um pptx com essa "
+    "imagem'), e 'arquivo' - a imagem entra dentro do arquivo.\n"
     "Regra de contexto (imagem): se a ULTIMA resposta do assistente foi uma IMAGEM "
     "gerada (o contexto pode indicar isso com uma nota '[Sistema: ... IMAGEM "
     "gerada ...]') e o pedido ATUAL do usuario e um AJUSTE, refino ou critica dessa "
@@ -1638,6 +1690,39 @@ def _texto_usuario_limpo(metadata, fallback=""):
     return fallback
 
 
+_RE_FORMATO_DOC = re.compile(
+    r"\b(?:pptx?|power\s?point|apresentacao|apresentacoes|slides?|deck|"
+    r"docx?|word|xlsx?|excel|planilhas?|relatorios?|pdf|"
+    r"html|pagina\s+web|site|documento)\b",
+    re.IGNORECASE,
+)
+
+
+def _nomeia_formato_documento(texto):
+    # PURA. True se o usuario NOMEOU um formato de ARQUIVO entregavel. Formatos de
+    # IMAGEM (png/jpeg/foto) de proposito NAO entram: "refaca essa imagem, mantenha png"
+    # continua sendo pedido de imagem, nao de documento.
+    return bool(_RE_FORMATO_DOC.search(_normalizar_ascii(texto or "")))
+
+
+def _nota_anexo(tem_imagem, nomes_docs):
+    # Nota deterministica para o CLASSIFICADOR. Ele so recebe TEXTO (_transcript usa
+    # _texto_de_msg, e _msgs_com_pedido_limpo ate remove 'files'), entao era CEGO ao
+    # anexo: no bug real ele julgou "refaca o design desse material" com uma IMAGEM
+    # anexada e respondeu 'arquivo', montando um PPTX de 10 slides com a imagem colada
+    # dentro. Comportamento coerente, rota errada - faltava o dado, nao juizo.
+    # Mesmo padrao da ancora _ultima_foi_imagem, que ja existia logo abaixo.
+    if tem_imagem and nomes_docs:
+        return ("[Sistema: o usuario anexou UMA IMAGEM e tambem %d documento(s): %s.]"
+                % (len(nomes_docs), ", ".join(nomes_docs[:3])))
+    if tem_imagem:
+        return "[Sistema: o usuario anexou uma IMAGEM nesta conversa.]"
+    if nomes_docs:
+        return ("[Sistema: o usuario anexou %d documento(s) de texto: %s.]"
+                % (len(nomes_docs), ", ".join(nomes_docs[:3])))
+    return ""
+
+
 def _imagens_recentes(messages, n=5):
     # PERSISTENCIA DO ANEXO NA ROTA DE IMAGEM (1.49.0). Devolve (tem_anexo, urls) do
     # anexo de imagem MAIS RECENTE nas ultimas n mensagens do usuario.
@@ -2347,8 +2432,11 @@ class Pipe:
         self._tool_cache = None
         self._tool_lock = asyncio.Lock()
 
-    async def _classificar(self, request, user, messages):
+    async def _classificar(self, request, user, messages, nota_anexo=""):
         transcript = _transcript(messages, 6)[:4000]
+        # FIX A (1.50.0): o TIPO do anexo entra no julgamento. Ver _nota_anexo.
+        if nota_anexo:
+            transcript = nota_anexo + "\n" + transcript
         # C1: ancora deterministica - se o ultimo turno do assistente foi uma
         # imagem gerada (marcador EXATO), avisa o classificador para ele poder
         # aplicar a regra de ajuste de imagem. Nao depende do transcript truncado.
@@ -3259,8 +3347,12 @@ class Pipe:
             categoria = "geral"
         else:
             try:
+                _tem_img_cls, _ = _imagens_recentes(body.get("messages"), 5)
+                _nota = _nota_anexo(
+                    _tem_img_cls, [a["nome"] for a in _anexos_recentes(_files)]
+                )
                 saida = await self._classificar(
-                    __request__, user, _msgs_rota
+                    __request__, user, _msgs_rota, _nota
                 )
                 for chave in ["imagem", "arquivo", "documentos", "geral"]:
                     if chave in saida:
@@ -3344,6 +3436,31 @@ class Pipe:
                     "chatnd: trava 'anexo + transformacao' -> %s vira arquivo", categoria
                 )
                 categoria = "arquivo"
+
+        # TRAVA 6 (1.50.0) - IMAGEM ANEXADA + TRANSFORMACAO -> rota 'imagem'.
+        # Bug real: uma IMAGEM anexada + "refaca o design desse material" foi classificada
+        # como 'arquivo' (juizo do proprio classificador, sem trava nenhuma) e o sistema
+        # montou um PPTX de 10 slides da base institucional com a imagem colada dentro.
+        # Cada peca fez o certo; a ROTA e que estava errada.
+        #
+        # E a PRIMEIRA trava que resgata PARA 'imagem' e a primeira que sobrescreve
+        # 'arquivo' - por isso roda por ULTIMO, depois das travas 4 e 5, e exige TRES
+        # sinais simultaneos:
+        #   1. o anexo e IMAGEM (nao documento - documento continua indo para arquivo);
+        #   2. o pedido e de TRANSFORMACAO (_pede_transformacao);
+        #   3. NENHUM formato de documento foi nomeado.
+        # O sinal 3 e o que protege a funcionalidade validada da 1.43.0: "monte uma
+        # apresentacao e inclua esta foto" nomeia formato -> NAO entra aqui. E ela tem
+        # dupla protecao, porque "monte" tambem nao e verbo de transformacao.
+        if categoria == "arquivo" and _pede_transformacao(texto):
+            if not _nomeia_formato_documento(texto):
+                _tem_img, _ = _imagens_recentes(body.get("messages"), 5)
+                if _tem_img and not _anexos_recentes(_files):
+                    log.info(
+                        "chatnd: trava 'imagem anexada + transformacao' -> arquivo "
+                        "vira imagem (nenhum formato de documento nomeado)"
+                    )
+                    categoria = "imagem"
 
         log.info(
             "chatnd: roteador -> %s (classificador=%r)", categoria, saida or "(atalho)"
