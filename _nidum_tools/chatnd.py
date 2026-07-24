@@ -1,9 +1,35 @@
 """
 title: ChatND
 author: Nidum
-version: 1.46.0
+version: 1.47.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.47.0:
+    - SEGUNDA CAUSA do mesmo incidente (achada pelo dono no log de producao:
+      "roteador -> documentos (classificador='geral')"). Para a frase "mantenha o conteudo
+      original e refaca os slides no padrao Nidum", o classificador respondeu GERAL - o
+      que so faz sentido se ele NAO VIU a frase.
+      CAUSA: o OWUI PREPENDA os <source> do anexo a mensagem do usuario, e _transcript
+      corta CADA mensagem em 400 chars (_texto_de_msg(m)[:400]). Com 3 PPTX (~48k chars de
+      historia dos Campos Gerais colados na frente), o classificador recebia 400 chars de
+      conteudo do documento e ZERO do pedido. O verbo podia estar na lista que nao
+      adiantava: A FRASE NAO CHEGAVA A SER LIDA.
+      ALCANCE MAIOR QUE O CASO: qualquer pedido com anexo grande estava sendo roteado as
+      cegas - nao so o de transformacao.
+      FIX: o roteamento passa a usar o PEDIDO PRISTINO (metadata['user_prompt'], salvo pelo
+      OWUI ANTES da injecao - middleware.py:2901) no classificador, nas travas e nas
+      consultas do RAG. Conservador: sem o campo, cai no texto de antes.
+    - FALSO POSITIVO que o mesmo fix mata: as travas casavam regex contra o CONTEUDO DO
+      DOCUMENTO. Um anexo que por acaso contivesse "refaca os slides" disparava a trava
+      sem o usuario ter pedido nada - agora elas leem so o que o usuario escreveu.
+    - AS DUAS CAUSAS ERAM INDEPENDENTES e as duas eram necessarias: a 1.46.0 (declarar
+      __files__) destravou a TRAVA 5; esta destrava o classificador. Consertar so uma
+      deixaria o sistema quebrado de outro jeito.
+    - VERBOS AMBIGUOS deliberadamente FORA da TRAVA 4 (decisao do dono): melhorar, revisar,
+      avaliar, comentar. "melhore a apresentacao" pode ser pedido de CONSELHO, nao de
+      arquivo - fica com o classificador, que tem contexto. Entram so os que significam
+      PRODUZIR DE NOVO (refazer/reformular/reescrever/redesenhar/adaptar/atualizar). Os 4
+      ambiguos tem teste provando que NAO viram arquivo.
   1.46.0:
     - BUG CRITICO: o conserto 1.44/1.45 estava INERTE em producao (achado por teste real do
       dono: 3 PPTX anexados + "mantenha o conteudo original e refaca os slides no padrao
@@ -1483,6 +1509,33 @@ def _texto_usuario_limpo(metadata, fallback=""):
     if isinstance(limpo, str) and limpo.strip():
         return limpo
     return fallback
+
+
+def _msgs_com_pedido_limpo(messages, limpo):
+    # Devolve as mensagens com o conteudo da ULTIMA do usuario trocado pelo pedido
+    # PRISTINO. Copia rasa - nao muta o body original.
+    #
+    # POR QUE (bug de producao 1.47.0): o OWUI PREPENDA os <source> do anexo a mensagem
+    # do usuario. Com 3 PPTX, o pedido fica depois de ~48k chars de conteudo colado. E
+    # _transcript corta CADA mensagem em 400 chars - entao o classificador via 400 chars
+    # de historia dos Campos Gerais e ZERO do pedido, e respondia 'geral' (o log real:
+    # "roteador -> documentos (classificador='geral')"). O verbo podia estar na lista que
+    # nao adiantava: a frase nao chegava a ser lida.
+    #
+    # BONUS (falso positivo que isto tambem mata): as travas casavam regex contra o
+    # CONTEUDO DO DOCUMENTO. Um anexo que por acaso contivesse "refaca os slides"
+    # disparava a trava sem o usuario ter pedido nada disso.
+    if not limpo:
+        return messages
+    saida = list(messages or [])
+    for i in range(len(saida) - 1, -1, -1):
+        if isinstance(saida[i], dict) and saida[i].get("role") == "user":
+            nova = dict(saida[i])
+            nova["content"] = limpo
+            nova.pop("files", None)
+            saida[i] = nova
+            break
+    return saida
 
 
 def _chars_injetados(metadata):
@@ -2972,18 +3025,30 @@ class Pipe:
             "documentos": "Documentos",
         }
 
-        texto = _ultimo_texto_usuario(body.get("messages"))
+        # PEDIDO PRISTINO (1.47.0) - antes do roteamento, nao so na geracao. Com anexo, a
+        # mensagem do usuario vem com os <source> colados na frente pelo OWUI; usar o
+        # user_prompt (salvo por ele ANTES da injecao) e o que faz o classificador e as
+        # travas lerem O PEDIDO, e nao o conteudo do documento. CONSERVADOR: sem o campo,
+        # cai no texto de antes (_texto_usuario_limpo devolve o fallback).
+        _bruto = _ultimo_texto_usuario(body.get("messages"))
+        texto = _texto_usuario_limpo(_meta, _bruto)
+        _msgs_rota = _msgs_com_pedido_limpo(body.get("messages"), texto)
+        if texto != _bruto:
+            log.info(
+                "chatnd: pedido LIMPO para o roteamento -> %d chars (bruto tinha %d; "
+                "os <source> do anexo escondiam o pedido)", len(texto), len(_bruto),
+            )
         categoria = "geral"
         saida = ""
 
         # v1.12.0: atalho - saudacao trivial em conversa nova nao paga
         # classificador (latencia menor no caso mais comum).
-        if self.valves.ATALHO_SAUDACAO and _e_saudacao_trivial(body.get("messages")):
+        if self.valves.ATALHO_SAUDACAO and _e_saudacao_trivial(_msgs_rota):
             categoria = "geral"
         else:
             try:
                 saida = await self._classificar(
-                    __request__, user, body.get("messages")
+                    __request__, user, _msgs_rota
                 )
                 for chave in ["imagem", "arquivo", "documentos", "geral"]:
                     if chave in saida:
@@ -3218,7 +3283,7 @@ class Pipe:
                 )
                 usar_acervo = (not anexos) or quer_canon
                 if texto and usar_acervo:
-                    consulta = _texto_de_busca(body.get("messages"), 3) or texto
+                    consulta = _texto_de_busca(_msgs_rota, 3) or texto
                     try:
                         contexto = await self._contexto_documento(
                             __request__, user, consulta, texto
@@ -3264,7 +3329,7 @@ class Pipe:
 
         # Rota de documentos: injeta o contexto recuperado (RAG).
         if categoria == "documentos" and texto:
-            consulta = _texto_de_busca(body.get("messages"), 3) or texto
+            consulta = _texto_de_busca(_msgs_rota, 3) or texto
             try:
                 contexto = await self._contexto_documento(
                     __request__, user, consulta, texto
