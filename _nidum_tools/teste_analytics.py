@@ -45,6 +45,13 @@ def carregar():
     corpo = "\n".join(l[4:] if l.startswith("    ") else l
                       for l in m.group(0).split("\n"))
     exec(corpo, ns)
+    for const in ("_LIMIAR_AMOSTRA", "_MAX_DIAS"):
+        m = re.search(r"^" + const + r"\s*=\s*\d+", fonte, re.M)
+        exec(m.group(0), ns)
+    for nome in ("_pctl", "_an_linha", "_analytics_parse", "_analytics_agregar",
+                 "_analytics_html"):
+        m = re.search(r"^def " + nome + r"\(.*?(?=^\S)", fonte, re.M | re.S)
+        exec(m.group(0), ns)
     return ns, fonte
 
 
@@ -169,7 +176,131 @@ async def main():
     ok &= check("anexo: tipo/fonte/faixa (faixa, nao valor exato)",
                 '_ev["anexo_faixa"] = _analytics_faixa(' in fonte)
 
-    print("\nRESULTADO: " + ("ANALYTICS 1a OK" if ok else "HOUVE FALHA"))
+    print("== 1b: parse + validacao do N (lixo/negativo/gigante nao varrem o banco) ==")
+    PARSE = ns["_analytics_parse"]
+    ok &= check("/analytics -> 30 (default)", PARSE("/analytics") == 30)
+    ok &= check("/analytics 7 -> 7", PARSE("/analytics 7") == 7)
+    ok &= check("/ANALYTICS -> 30 (case-insensitive)", PARSE("/ANALYTICS") == 30)
+    ok &= check("/analytics 365 -> 365 (teto ok)", PARSE("/analytics 365") == 365)
+    ok &= check("/analytics abc -> erro claro", isinstance(PARSE("/analytics abc"), tuple))
+    ok &= check("/analytics -5 -> erro", isinstance(PARSE("/analytics -5"), tuple))
+    ok &= check("/analytics 999999 -> erro (teto)", isinstance(PARSE("/analytics 999999"), tuple))
+    ok &= check("/analytics 0 -> erro", isinstance(PARSE("/analytics 0"), tuple))
+    ok &= check("mensagem comum -> None (nao e o comando)", PARSE("ola tudo bem") is None)
+    ok &= check("erro traz orientacao", "dias" in PARSE("/analytics x")[1])
+
+    print("== 1b: agregacao read-only sobre sqlite semeado ==")
+    import sqlite3 as _sq, datetime as _dt, tempfile as _tf, os as _os
+    AGG = ns["_analytics_agregar"]
+
+    def _mkdb():
+        return _os.path.join(_tf.mkdtemp(prefix="an1b_"), "a.db")
+
+    def _seed(db, rows):
+        c = _sq.connect(db)
+        c.execute("CREATE TABLE IF NOT EXISTS eventos (id INTEGER PRIMARY KEY "
+                  "AUTOINCREMENT, ts TEXT, user_hash TEXT, rota TEXT, classificador TEXT, "
+                  "trava TEXT, anexo TEXT, anexo_fonte TEXT, anexo_faixa TEXT, "
+                  "formato_saida TEXT, desfecho TEXT, recusa_cat TEXT, erro_cat TEXT, "
+                  "latencia_ms INTEGER)")
+        for (dias_atras, rota, classif, trava, recusa, erro, lat, anexo, fonte) in rows:
+            ts = (_dt.datetime.now(_dt.timezone.utc)
+                  - _dt.timedelta(days=dias_atras)).isoformat()
+            c.execute("INSERT INTO eventos (ts,rota,classificador,trava,recusa_cat,"
+                      "erro_cat,latencia_ms,anexo,anexo_fonte) VALUES (?,?,?,?,?,?,?,?,?)",
+                      (ts, rota, classif, trava, recusa, erro, lat, anexo, fonte))
+        c.commit()
+        c.close()
+
+    db1 = _mkdb()
+    _seed(db1, [
+        (0, "arquivo", "arquivo", None, None, None, 1000, "documento", "storage"),
+        (0, "arquivo", "arquivo", None, None, None, 2000, None, None),
+        (0, "documentos", "geral", "menciona_nidum", None, None, 500, None, None),
+        (0, "arquivo", "documentos", "pede_arquivo", None, None, None, None, None),
+        (0, "imagem", "imagem", None, None, None, 3000, "imagem", None),
+        (0, "tarefa_interna", None, None, None, None, None, None, None),
+        (0, "analytics", None, None, None, None, None, None, None),
+    ])
+    a = AGG(db1, 30)
+    ok &= check("total conta tudo (7)", a["total"] == 7)
+    ok &= check("estado 'pouco' (< 20)", a["estado"] == "pouco")
+    ok &= check("DENOMINADOR real exclui tarefa_interna e analytics (=5)", a["real_total"] == 5)
+    ok &= check("uso por rota real correto",
+                a["rotas"] == {"arquivo": 3, "documentos": 1, "imagem": 1})
+    ok &= check("bastidor a parte (tarefa_interna=1)", a["bastidor"] == 1)
+    ok &= check("divergencia = trava E rota!=classificador (=2)", a["div_total"] == 2)
+    ok &= check("por trava conta as duas",
+                a["travas"].get("menciona_nidum") == 1 and a["travas"].get("pede_arquivo") == 1)
+
+    db2 = _mkdb()
+    _seed(db2, [
+        (1, "documentos", "geral", "menciona_nidum", None, None, None, None, None),
+        (2, "documentos", "geral", "menciona_nidum", None, None, None, None, None),
+        (3, "arquivo", "documentos", "pede_arquivo", None, None, None, None, None),
+        (20, "documentos", "geral", "menciona_nidum", None, None, None, None, None),
+        (25, "arquivo", "documentos", "pede_arquivo", None, None, None, None, None),
+    ])
+    b = AGG(db2, 30)
+    ok &= check("tendencia: total 5 divergencias", b["div_total"] == 5)
+    ok &= check("tendencia: metade recente = 3", b["div_rec"] == 3)
+    ok &= check("tendencia: metade anterior = 2", b["div_ant"] == 2)
+
+    ok &= check("arquivo inexistente -> estado vazio, sem erro",
+                AGG(_os.path.join(_tf.mkdtemp(), "nada.db"), 30)["estado"] == "vazio")
+    db3 = _mkdb()
+    _seed(db3, [(40, "arquivo", "arquivo", None, None, None, 1, None, None)])
+    ok &= check("tabela existe mas 0 na janela -> vazio", AGG(db3, 30)["estado"] == "vazio")
+
+    db4 = _mkdb()
+    _seed(db4, [(0, "geral", "geral", None, None, "rate_limit_429", None, None, None),
+                (0, "geral", "geral", None, None, "rate_limit_429", None, None, None),
+                (0, "documentos", "documentos", None, None, "motor_erro", None, None, None)]
+           + [(0, "arquivo", "arquivo", None, None, None, ms, None, None)
+              for ms in (1000, 2000, 3000, 4000, 5000)])
+    d = AGG(db4, 30)
+    ok &= check("429 contado separado", d["erros"].get("rate_limit_429") == 2)
+    ok &= check("erro generico separado do 429", d["erros"].get("motor_erro") == 1)
+    ok &= check("latencia p50 do arquivo (mediana 1..5k = 3000)",
+                d["latencia"]["arquivo"]["p50"] == 3000)
+
+    print("== 1b: render nunca engana com base rala ==")
+    HTML = ns["_analytics_html"]
+    h_pouco = HTML(a, 30)
+    ok &= check("amostra pequena -> aviso no topo", "Amostra pequena" in h_pouco)
+    ok &= check("amostra pequena -> NAO mostra percentual", "%)" not in h_pouco)
+    ok &= check("ressalva do stream impressa",
+                "ate o DESPACHO" in h_pouco and "stream inteiro" in h_pouco)
+    ok &= check("render e ASCII", not [c for c in h_pouco if ord(c) > 127])
+    d["real_total"] = 40
+    d["estado"] = "cheio"
+    d["rotas"] = {"arquivo": 40}
+    h_cheio = HTML(d, 30)
+    ok &= check("base suficiente -> mostra percentual", "%)" in h_cheio)
+    ok &= check("429 destacado no render", "429" in h_cheio)
+
+    print("== 1b: fiacao (admin-gated, antes do roteamento, best-effort) ==")
+    ok &= check("comando detectado ANTES do roteador",
+                fonte.index("_analytics_parse(_ultimo_texto_usuario") < fonte.index("rota = {"))
+    ok &= check("gate de admin: coautor comum nao dispara",
+                'and getattr(user, "role", "") == "admin"' in fonte)
+    ok &= check("leitura best-effort (mensagem honesta, nao levanta)",
+                "Nao consegui ler o analytics agora" in fonte)
+    ok &= check("valve OFF -> comando responde desligado", "O analytics esta desligado" in fonte)
+    ok &= check("leitura em thread read-only",
+                "asyncio.to_thread(_analytics_agregar" in fonte and "?mode=ro" in fonte)
+    ok &= check("estado vazio -> mensagem honesta", "ainda nao registrou eventos" in fonte)
+    ok &= check("relatorio via gerar_html on-brand",
+                "tool.gerar_html(" in fonte and '"Analytics ChatND"' in fonte)
+
+    print("== ESCOPO: nenhum nome indefinido (o bug 'messages' da 1.53.0) ==")
+    for fn in ("_pipe_impl", "_registrar", "_relatorio_analytics", "_ler_bytes_storage",
+               "_completar_anexos", "_resposta_ou_aviso", "_gerar_arquivo",
+               "_gerar_imagem", "_analytics_agregar", "_analytics_html"):
+        indef = E.nomes_indefinidos(fonte, fn)
+        ok &= check("%s: sem nome indefinido (%s)" % (fn, indef or "ok"), not indef)
+
+    print("\nRESULTADO: " + ("ANALYTICS 1a+1b OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
 
 

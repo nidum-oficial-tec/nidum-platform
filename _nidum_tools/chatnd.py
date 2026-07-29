@@ -1,9 +1,47 @@
 """
 title: ChatND
 author: Nidum
-version: 1.52.0
+version: 1.53.1
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.53.1:
+    - HOTFIX de DOIS bugs de nome indefinido que os testes offline nao pegavam (py_compile
+      passa porque Python resolve nomes em runtime). Achados por um verificador de ESCOPO
+      novo (teste_estrutura.nomes_indefinidos, via AST) - agora na suite.
+    - BUG 1 (visivel, 1.53.0/1b): a deteccao do /analytics usava 'messages', que NAO existe
+      em _pipe_impl (o pipe usa body.get('messages')). Rodava em TODA mensagem antes do gate
+      de admin -> NameError em toda geracao normal, nao so no /analytics. Corrigido para
+      body.get('messages').
+    - BUG 2 (SILENCIOSO, existia desde a 1.52.0/1a): 'os' era usado (os.path) em _registrar,
+      _relatorio_analytics e _analytics_agregar mas NUNCA importado no modulo. No _registrar
+      o NameError era ENGOLIDO pelo best-effort -> o store da 1a NUNCA GRAVOU em producao. A
+      "amostra jovem" que esperavamos ver nao era jovem: era vazia por falha silenciosa. O
+      teste offline mascarava porque injetava 'os' no namespace. Corrigido: import os no topo.
+    - LICAO: best-effort protege o usuario MAS esconde a propria falha. O verificador de
+      escopo e a rede contra a classe (undefined name) que compile+runtime-swallow ocultam.
+    - CONSEQUENCIA para a validacao: o relogio dos "dados ricos" so comeca a contar quando a
+      1.53.1 estiver no ar - antes disso o store estava vazio por bug, nao por pouco uso.
+  1.53.0:
+    - ANALYTICS Fatia 1b: relatorio /analytics (SO ADMIN). Le o store da 1a e entrega um
+      HTML on-brand (via gerar_html). Comando detectado ANTES do roteamento, no mesmo
+      lugar do atalho de __task__.
+    - GATE DE ADMIN: role=="admin" (o mesmo padrao da 1.48.0). Coautor comum: a deteccao
+      NEM dispara - a mensagem cai no roteamento normal e ele nao ve que o comando existe.
+    - /analytics N (N dias, default 30). N VALIDADO: lixo, negativo, 0 ou > 365 viram
+      mensagem clara ("use um numero de dias entre 1 e 365"), NUNCA varrem o banco.
+    - LEITURA SEGURA: read-only (?mode=ro), em thread (nao trava o loop), best-effort -
+      falha vira mensagem honesta ao admin, nunca traceback. Fora do caminho de geracao
+      (so admin chega): um bug na 1b nao afeta quem esta gerando um arquivo.
+    - TRES ESTADOS DO BANCO (relatorio honesto, nunca enganoso): VAZIO -> "ainda nao
+      registrou eventos, e esperado logo apos publicar"; POUCO (< 20) -> mostra CONTAGENS
+      com aviso de amostra pequena, NUNCA percentual (2 de 3 nao vira 67%); CHEIO -> %.
+    - DENOMINADOR CORRETO: "uso por rota" exclui tarefa_interna (bastidor) E analytics (o
+      proprio comando) - os % sao sobre PEDIDOS REAIS, nao o total inflado.
+    - DIVERGENCIA com TENDENCIA: alem da contagem por trava, metade recente vs metade
+      anterior da janela - para ver se o classificador esta DEGRADANDO, nao so o retrato.
+    - Ressalva do stream impressa AO LADO da latencia (conversa = ate o despacho, nao o
+      stream inteiro) - um "documentos: 200ms" sem essa nota enganaria. Reusa a valve
+      ANALYTICS_ON (desligada -> comando responde "desligado"). Nenhuma valve nova.
   1.52.0:
     - ANALYTICS DE ROTEAMENTO, Fatia 1a (store, invisivel). Objetivo do dono: parar de
       consertar as cegas - metade dos ciclos recentes foi diagnostico manual de log
@@ -965,6 +1003,7 @@ changelog:
 # Apenas ASCII no codigo, de proposito (evita corrupcao em copy-paste).
 
 import asyncio
+import os
 import time
 import datetime
 import json
@@ -1760,6 +1799,193 @@ def _analytics_write(db_path, ev):
         con.commit()
     finally:
         con.close()
+
+
+# ------------------------------------------------------------------- ANALYTICS 1b
+# Relatorio /analytics (so admin). Leitura READ-ONLY, best-effort, fora do caminho de
+# geracao. So le colunas fechadas do store 1a - content-free tambem na saida.
+
+_LIMIAR_AMOSTRA = 20      # abaixo disto: mostra contagem, NUNCA % (nao enganar com base rala)
+_MAX_DIAS = 365
+
+
+def _analytics_parse(texto):
+    # Devolve None (nao e o comando), ("erro", msg) (N invalido) ou int (dias validos).
+    # Robusto a lixo: /analytics abc, /analytics -5, /analytics 999999 nao varrem o banco.
+    import re as _re
+    m = _re.match(r"^\s*/analytics(?:\s+(\S+))?\s*$", str(texto or ""), _re.IGNORECASE)
+    if not m:
+        return None
+    arg = m.group(1)
+    if arg is None:
+        return 30
+    try:
+        n = int(arg)
+    except Exception:
+        return ("erro", "Use um numero de dias, ex.: /analytics 7")
+    if n < 1 or n > _MAX_DIAS:
+        return ("erro", "Use um numero de dias entre 1 e %d, ex.: /analytics 7" % _MAX_DIAS)
+    return n
+
+
+def _pctl(vals, p):
+    # Percentil simples (interpolado). vals = lista de int. p em [0,1].
+    v = sorted(x for x in vals if x is not None)
+    if not v:
+        return None
+    k = (len(v) - 1) * p
+    f = int(k)
+    if f + 1 < len(v):
+        return int(v[f] + (v[f + 1] - v[f]) * (k - f))
+    return int(v[f])
+
+
+def _analytics_agregar(db_path, dias):
+    # READ-ONLY. Devolve um dict de AGREGADOS (contagens, faixas, percentis) - nunca
+    # linhas cruas, nunca conteudo. estado: 'vazio' | 'pouco' | 'cheio'. Levanta em falha
+    # (o chamador async engole). Se o arquivo/tabela nao existe -> estado 'vazio'.
+    import sqlite3
+    import datetime
+    if not os.path.isfile(db_path):
+        return {"estado": "vazio", "total": 0, "dias": dias}
+    corte = (datetime.datetime.now(datetime.timezone.utc)
+             - datetime.timedelta(days=int(dias))).isoformat()
+    meio = (datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(days=int(dias) / 2.0)).isoformat()
+    con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=1.0)
+    try:
+        cur = con.cursor()
+        try:
+            cur.execute("SELECT COUNT(*) FROM eventos WHERE ts >= ?", (corte,))
+        except sqlite3.OperationalError:
+            return {"estado": "vazio", "total": 0, "dias": dias}   # tabela ainda nao existe
+        total = cur.fetchone()[0] or 0
+        if total == 0:
+            return {"estado": "vazio", "total": 0, "dias": dias}
+
+        def q(sql, params=()):
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+        rotas = dict(q("SELECT rota, COUNT(*) FROM eventos WHERE ts>=? GROUP BY rota",
+                       (corte,)))
+        # DENOMINADOR de 'uso por rota' = pedidos REAIS: exclui bastidor (tarefa_interna)
+        # e o proprio comando de relatorio (analytics).
+        real = {k: v for k, v in rotas.items()
+                if k not in (None, "tarefa_interna", "analytics")}
+        real_total = sum(real.values())
+
+        travas = dict(q("SELECT trava, COUNT(*) FROM eventos WHERE ts>=? AND trava IS NOT "
+                        "NULL GROUP BY trava", (corte,)))
+        # DIVERGENCIA = a rede resgatou (rota final != veredito do classificador).
+        div_total = q("SELECT COUNT(*) FROM eventos WHERE ts>=? AND trava IS NOT NULL AND "
+                      "rota IS NOT NULL AND classificador IS NOT NULL AND "
+                      "rota != classificador", (corte,))[0][0] or 0
+        # TENDENCIA: divergencia na metade RECENTE vs metade ANTERIOR da janela.
+        div_rec = q("SELECT COUNT(*) FROM eventos WHERE ts>=? AND trava IS NOT NULL AND "
+                    "rota!=classificador", (meio,))[0][0] or 0
+        div_ant = max(0, div_total - div_rec)
+
+        recusas = dict(q("SELECT recusa_cat, COUNT(*) FROM eventos WHERE ts>=? AND "
+                         "recusa_cat IS NOT NULL GROUP BY recusa_cat", (corte,)))
+        erros = dict(q("SELECT erro_cat, COUNT(*) FROM eventos WHERE ts>=? AND erro_cat "
+                       "IS NOT NULL GROUP BY erro_cat", (corte,)))
+
+        lat = {}
+        for rota, ms in q("SELECT rota, latencia_ms FROM eventos WHERE ts>=? AND "
+                          "latencia_ms IS NOT NULL", (corte,)):
+            lat.setdefault(rota, []).append(ms)
+        latencia = {r: {"p50": _pctl(v, 0.5), "p90": _pctl(v, 0.9), "n": len(v)}
+                    for r, v in lat.items()}
+
+        anexo_tipo = dict(q("SELECT anexo, COUNT(*) FROM eventos WHERE ts>=? AND anexo IS "
+                            "NOT NULL GROUP BY anexo", (corte,)))
+        anexo_fonte = dict(q("SELECT anexo_fonte, COUNT(*) FROM eventos WHERE ts>=? AND "
+                             "anexo_fonte IS NOT NULL GROUP BY anexo_fonte", (corte,)))
+
+        estado = "pouco" if total < _LIMIAR_AMOSTRA else "cheio"
+        return {
+            "estado": estado, "total": total, "dias": dias, "real_total": real_total,
+            "rotas": real, "bastidor": rotas.get("tarefa_interna", 0),
+            "travas": travas, "div_total": div_total,
+            "div_rec": div_rec, "div_ant": div_ant,
+            "recusas": recusas, "erros": erros, "latencia": latencia,
+            "anexo_tipo": anexo_tipo, "anexo_fonte": anexo_fonte,
+        }
+    finally:
+        con.close()
+
+
+def _an_linha(mapa):
+    # "a: 4 - b: 2" a partir de um dict {cat: n}, ordenado por contagem desc.
+    if not mapa:
+        return "(nenhum)"
+    itens = sorted(mapa.items(), key=lambda kv: -(kv[1] or 0))
+    return " - ".join("%s: %d" % (k, v) for k, v in itens)
+
+
+def _analytics_html(agg, dias):
+    # Monta o HTML do relatorio a partir dos AGREGADOS. gerar_html injeta a marca por
+    # cima. Texto ASCII (regra do repo). Os TRES estados: vazio/pouco/cheio.
+    import html as _h
+    total = agg.get("total", 0)
+    rt = agg.get("real_total", 0) or 0
+    mostra_pct = rt >= _LIMIAR_AMOSTRA   # % so com base suficiente - nunca enganar
+
+    def pct(n):
+        return (" (%d%%)" % round(100 * n / rt)) if (mostra_pct and rt) else ""
+
+    aviso = ""
+    if agg.get("estado") == "pouco":
+        aviso = (
+            "<p style='padding:10px;border:1px solid #9A4A2E;border-radius:8px'>"
+            "<b>Amostra pequena</b> (%d eventos nos ultimos %d dias). As proporcoes "
+            "abaixo ainda NAO sao conclusivas - mostro contagens, nao percentuais."
+            "</p>" % (total, dias))
+
+    linhas = [
+        "<h1>ChatND - Analytics de roteamento</h1>",
+        "<p>Periodo: ultimos %d dias &middot; %d eventos &middot; %d pedidos reais "
+        "(bastidor a parte: %d)</p>" % (dias, total, rt, agg.get("bastidor", 0)),
+        aviso,
+        "<h2>Uso por rota</h2><ul>",
+    ]
+    for r, n in sorted(agg.get("rotas", {}).items(), key=lambda kv: -(kv[1] or 0)):
+        linhas.append("<li>%s: %d%s</li>" % (_h.escape(str(r)), n, pct(n)))
+    linhas.append("</ul>")
+
+    linhas.append("<h2>Divergencia classificador vs trava</h2>")
+    linhas.append("<p>Quantas vezes a rede determinista resgatou o classificador (= onde "
+                  "ele erraria sozinho): <b>%d</b>." % agg.get("div_total", 0))
+    tend = ("subindo" if agg.get("div_rec", 0) > agg.get("div_ant", 0)
+            else "estavel/caindo")
+    linhas.append(" Tendencia: metade recente <b>%d</b> vs metade anterior <b>%d</b> "
+                  "(%s).</p>" % (agg.get("div_rec", 0), agg.get("div_ant", 0), tend))
+    linhas.append("<p>Por trava: %s</p>" % _h.escape(_an_linha(agg.get("travas", {}))))
+
+    linhas.append("<h2>Recusas honestas</h2><p>%s</p>"
+                  % _h.escape(_an_linha(agg.get("recusas", {}))))
+
+    erros = agg.get("erros", {})
+    e429 = erros.get("rate_limit_429", 0)
+    linhas.append("<h2>Erros</h2><p>%s%s</p>" % (
+        _h.escape(_an_linha(erros)),
+        (" &nbsp; [!] 429: %d" % e429) if e429 else ""))
+
+    linhas.append("<h2>Latencia (p50 / p90 por rota, em ms)</h2><ul>")
+    for r, d in sorted(agg.get("latencia", {}).items()):
+        linhas.append("<li>%s: %s / %s (n=%d)</li>"
+                      % (_h.escape(str(r)), d.get("p50"), d.get("p90"), d.get("n")))
+    linhas.append("</ul>")
+    linhas.append("<p><i>Ressalva: nas rotas de conversa (geral/documentos) a latencia e "
+                  "medida ate o DESPACHO ao motor, nao o stream inteiro - a resposta "
+                  "continua depois. O stream completo entra na proxima fatia (token).</i></p>")
+
+    linhas.append("<h2>Anexo</h2><p>Por tipo: %s &middot; Por fonte: %s</p>" % (
+        _h.escape(_an_linha(agg.get("anexo_tipo", {}))),
+        _h.escape(_an_linha(agg.get("anexo_fonte", {})))))
+
+    return "\n".join(x for x in linhas if x)
 
 
 def _eh_imagem(arq, nome):
@@ -3146,6 +3372,35 @@ class Pipe:
                 break
         return messages
 
+    async def _relatorio_analytics(self, __user__, dias):
+        # LEITURA read-only, best-effort, em thread, FORA do caminho de geracao (so admin
+        # chega aqui). Nunca levanta - devolve mensagem honesta em vez de traceback.
+        if not getattr(self.valves, "ANALYTICS_ON", True):
+            return ("O analytics esta desligado (valve ANALYTICS_ON). Ligue a valve para "
+                    "gerar o relatorio.")
+        try:
+            from open_webui.env import DATA_DIR
+            db = os.path.join(DATA_DIR, "chatnd_analytics.db")
+            agg = await asyncio.to_thread(_analytics_agregar, db, dias)
+        except Exception:
+            log.exception("chatnd: leitura do analytics falhou")
+            return "Nao consegui ler o analytics agora. Tente de novo em instantes."
+        if not agg:
+            return "Nao consegui ler o analytics agora."
+        if agg.get("estado") == "vazio":
+            # BANCO RECEM-NASCIDO: honesto, nao assustador, nao um numero pobre.
+            return ("O analytics ainda nao registrou eventos nos ultimos %d dias. Isso e "
+                    "esperado logo apos publicar - use o ChatND por um tempo e volte." % dias)
+        try:
+            html = _analytics_html(agg, dias)
+            tool = await self._get_tool()
+            return await tool.gerar_html(
+                "Analytics ChatND", html, __user__, ecossistema="TEC"
+            )
+        except Exception:
+            log.exception("chatnd: falha ao renderizar o relatorio de analytics")
+            return "Li os dados, mas nao consegui montar o relatorio. Tente de novo."
+
     async def _registrar(self, ev):
         # BEST-EFFORT, NAO-BLOQUEANTE. Duas camadas: a valve ANALYTICS_ON (desligar de
         # proposito) e este try/except (rede contra o acidental). NUNCA levanta - analytics
@@ -3631,6 +3886,17 @@ class Pipe:
             return await generate_chat_completion(
                 __request__, body, user, bypass_filter=True
             )
+
+        # COMANDO /analytics (1b) - so ADMIN, ANTES do roteamento. Coautor comum: a
+        # deteccao NEM dispara (falta o papel), a mensagem cai no roteamento normal e ele
+        # nao ve que o comando existe. N validado (_analytics_parse): lixo/negativo/gigante
+        # viram mensagem clara, nunca varrem o banco.
+        _an = _analytics_parse(_ultimo_texto_usuario(body.get("messages")))
+        if _an is not None and getattr(user, "role", "") == "admin":
+            _ev["rota"] = "analytics"
+            if isinstance(_an, tuple):
+                return _an[1]
+            return await self._relatorio_analytics(__user__, _an)
 
         rota = {
             "geral": self.valves.MODELO_GERAL,
