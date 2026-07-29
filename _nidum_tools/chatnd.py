@@ -1,9 +1,39 @@
 """
 title: ChatND
 author: Nidum
-version: 1.51.0
+version: 1.52.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.52.0:
+    - ANALYTICS DE ROTEAMENTO, Fatia 1a (store, invisivel). Objetivo do dono: parar de
+      consertar as cegas - metade dos ciclos recentes foi diagnostico manual de log
+      (429, classificador='geral', anexo achatado). Este e o STORE; o relatorio (1b) e o
+      token (Fatia 2, isolada no streaming) vem depois.
+    - CONTENT-FREE POR DESIGN, nao por promessa: SQLite dedicado (chatnd_analytics.db no
+      DATA_DIR, ao lado do webui.db - herda a durabilidade que ja guarda os chats). O
+      schema tem 14 colunas fechadas (rota, classificador, trava, anexo/tipo/fonte/FAIXA,
+      formato_saida, desfecho, recusa_cat, erro_cat, latencia_ms, ts, user_hash). NAO
+      EXISTE coluna que aceite texto do pedido, conteudo de anexo, nome de arquivo ou
+      saida. Tamanho do anexo em FAIXA (<10k/10-50k/50-150k/>150k), nunca o valor exato.
+    - PRIVACIDADE POR PADRAO: user_hash e HMAC do id, mas so quando ANALYTICS_USER_SALT
+      esta configurado; VAZIO por padrao -> user_hash NULL (anonimo). Identificacao por
+      escolha consciente do dono, nunca de fabrica.
+    - BEST-EFFORT / NAO-BLOQUEANTE (licao do 429/R2): a escrita e UMA vez por requisicao,
+      no finally do wrapper, em thread (nao trava o event loop), dentro de try/except que
+      ENGOLE tudo. Analytics NUNCA degrada a resposta. Duas camadas: valve ANALYTICS_ON
+      (desligar de proposito, rollback sem reverter o pipe) + o try/except (rede contra o
+      acidental).
+    - A RESPOSTA NUNCA PASSA POR ANALYTICS: o corpo do pipe virou _pipe_impl; o novo pipe
+      e um wrapper fino que devolve exatamente o que _pipe_impl devolveu e registra no
+      finally, DEPOIS. Byte-identico com analytics on/off por construcao.
+    - O QUE 1a CAPTURA (os eventos do dono): recusas honestas etiquetadas (ilegivel/
+      nao_coube/sem_imagem/anexo_inutil - o buraco nº1, antes invisivel), 429 separado do
+      erro generico (rate_limit_429), divergencia classificador vs trava (classificador
+      pre-trava + qual trava resgatou), latencia por rota (do despacho ate a resposta;
+      para conversa e ate o despacho, nao o stream inteiro - stream fica na Fatia 2).
+    - 1a e INVISIVEL: sem o relatorio (1b), nada muda para nenhum usuario - o store so
+      acumula. Publicavel sozinha, para confirmar em producao que a resposta nao mudou
+      antes de existir leitor.
   1.51.0:
     - FIDELIDADE ESTRUTURAL de anexo de CODIGO (par da tool 2.6.0). Bug real: um app HTML
       de 59 KB (form de vistoria, com <script> e 7 botoes com handlers) foi "editado" e
@@ -935,6 +965,7 @@ changelog:
 # Apenas ASCII no codigo, de proposito (evita corrupcao em copy-paste).
 
 import asyncio
+import time
 import datetime
 import json
 import logging
@@ -1665,6 +1696,70 @@ def _diag_estrutura_anexos(files):
                len(dados.get("content") or ""))
         )
     return " || ".join(partes) if partes else "(nenhum anexo)"
+
+
+# ------------------------------------------------------------------- ANALYTICS (1a)
+# Store CONTENT-FREE: nenhuma funcao aqui aceita texto do pedido, conteudo de anexo,
+# nome de arquivo ou saida. So categorias fechadas, faixas, hash e numero.
+
+def _analytics_faixa(n):
+    # Tamanho do anexo em FAIXA, nunca o valor exato (exigencia de privacidade: o byte
+    # exato do arquivo de UM usuario e mais identificavel que uma faixa).
+    try:
+        n = int(n or 0)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    if n < 10000:
+        return "<10k"
+    if n < 50000:
+        return "10-50k"
+    if n < 150000:
+        return "50-150k"
+    return ">150k"
+
+
+def _analytics_user_hash(uid, salt):
+    # ANONIMO POR PADRAO: sem salt -> None. So vira pseudonimo (HMAC) quando o dono
+    # configura o salt - identificacao por escolha consciente, nunca de fabrica.
+    if not salt or not uid:
+        return None
+    import hmac
+    import hashlib
+    return hmac.new(str(salt).encode("utf-8"),
+                    str(uid).encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+
+
+def _analytics_write(db_path, ev):
+    # SYNC, roda em THREAD (nao trava o event loop). CREATE IF NOT EXISTS + INSERT.
+    # Pode levantar (disco cheio, lock) - o chamador async engole. Aqui NAO ha conteudo:
+    # so as 13 colunas fechadas do schema aprovado.
+    import sqlite3
+    import datetime
+    con = sqlite3.connect(db_path, timeout=1.0)
+    try:
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS eventos ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, user_hash TEXT, rota TEXT, "
+            "classificador TEXT, trava TEXT, anexo TEXT, anexo_fonte TEXT, "
+            "anexo_faixa TEXT, formato_saida TEXT, desfecho TEXT, recusa_cat TEXT, "
+            "erro_cat TEXT, latencia_ms INTEGER)"
+        )
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        con.execute(
+            "INSERT INTO eventos (ts, user_hash, rota, classificador, trava, anexo, "
+            "anexo_fonte, anexo_faixa, formato_saida, desfecho, recusa_cat, erro_cat, "
+            "latencia_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ts, ev.get("user_hash"), ev.get("rota"), ev.get("classificador"),
+             ev.get("trava"), ev.get("anexo"), ev.get("anexo_fonte"),
+             ev.get("anexo_faixa"), ev.get("formato_saida"),
+             ev.get("desfecho") or "ok", ev.get("recusa_cat"), ev.get("erro_cat"),
+             ev.get("latencia_ms")),
+        )
+        con.commit()
+    finally:
+        con.close()
 
 
 def _eh_imagem(arq, nome):
@@ -2445,6 +2540,14 @@ class Pipe:
         # 200k do MAX_CHARS_TOTAL. Cortar TRECHOS e coerente (ja sao uma selecao); cortar
         # o ANEXO nao seria (por isso aquele PARA E AVISA em vez de truncar).
         MAX_CHARS_ACERVO_COM_ANEXO: int = Field(default=45000)
+        # ANALYTICS (1.52.0 / Fatia 1a). Store content-free de eventos de roteamento.
+        # ANALYTICS_ON: desligar de proposito (rollback sem reverter o pipe). Mesmo
+        #   ligada, cada passo e best-effort (try/except) - analytics NUNCA degrada a
+        #   resposta.
+        # ANALYTICS_USER_SALT: VAZIO por padrao -> user_hash NULL (ANONIMO). Pseudonimo
+        #   so quando o dono configurar o salt, de proposito. Privacidade por padrao.
+        ANALYTICS_ON: bool = Field(default=True)
+        ANALYTICS_USER_SALT: str = Field(default="")
         MOSTRAR_ROTA: bool = Field(default=False)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
@@ -2905,7 +3008,7 @@ class Pipe:
         elif done_chunk is not None:
             yield done_chunk
 
-    def _resposta_ou_aviso(self, resp):
+    def _resposta_ou_aviso(self, resp, _ev=None):
         # Troca resposta em branco/erro do motor pela MENSAGEM_INSTABILIDADE.
         # Casos: (a) streaming saudavel -> StreamingResponse (encapsula iterador);
         # (b) falha do motor (ex.: quota/billing) -> JSONResponse com .body
@@ -2919,6 +3022,10 @@ class Pipe:
             status = int(getattr(resp, "status_code", 200) or 200)
             if status >= 400:
                 log.error("chatnd: motor devolveu status %s", status)
+                if _ev is not None:
+                    _ev["desfecho"] = "erro"
+                    _ev["erro_cat"] = ("rate_limit_429" if status == 429
+                                       else "motor_erro")
                 return MENSAGEM_INSTABILIDADE
         except Exception:
             log.exception("chatnd: falha ao ler status_code da resposta")
@@ -2934,11 +3041,20 @@ class Pipe:
         if isinstance(d, dict):
             if d.get("error"):
                 log.error("chatnd: motor devolveu erro: %s", str(d.get("error"))[:500])
+                if _ev is not None:
+                    _txt = str(d.get("error")).lower()
+                    _ev["desfecho"] = "erro"
+                    _ev["erro_cat"] = ("rate_limit_429"
+                                       if ("429" in _txt or "rate" in _txt)
+                                       else "motor_erro")
                 return MENSAGEM_INSTABILIDADE
             ch = d.get("choices") or []
             content = (ch[0].get("message") or {}).get("content") if ch else None
             if not (content and str(content).strip()):
                 log.error("chatnd: motor devolveu resposta vazia (sem content)")
+                if _ev is not None:
+                    _ev["desfecho"] = "erro"
+                    _ev["erro_cat"] = "motor_vazio"
                 return MENSAGEM_INSTABILIDADE
         return resp
 
@@ -3029,6 +3145,29 @@ class Pipe:
                     )
                 break
         return messages
+
+    async def _registrar(self, ev):
+        # BEST-EFFORT, NAO-BLOQUEANTE. Duas camadas: a valve ANALYTICS_ON (desligar de
+        # proposito) e este try/except (rede contra o acidental). NUNCA levanta - analytics
+        # jamais degrada a resposta do usuario. A escrita roda em THREAD (o event loop
+        # segue livre). Fecha a latencia aqui, no fim do turno.
+        try:
+            if not getattr(self.valves, "ANALYTICS_ON", True):
+                return
+            if not ev:
+                return
+            if ev.get("t0") is not None and ev.get("latencia_ms") is None:
+                try:
+                    ev["latencia_ms"] = int((time.monotonic() - ev["t0"]) * 1000)
+                except Exception:
+                    ev["latencia_ms"] = None
+            from open_webui.env import DATA_DIR
+            db = os.path.join(DATA_DIR, "chatnd_analytics.db")
+            await asyncio.to_thread(_analytics_write, db, ev)
+        except Exception:
+            log.exception(
+                "chatnd: analytics best-effort falhou (ignorado - a resposta segue)"
+            )
 
     async def _ler_bytes_storage(self, fo):
         # BYTES BRUTOS do upload original (o codigo-fonte literal, com <script> e handlers).
@@ -3294,8 +3433,11 @@ class Pipe:
 
     async def _gerar_imagem(
         self, request, user, texto, __user__, tem_anexo_imagem=False,
-        imagens_ref=None, texto_contexto=None, descricao_anterior=None,
+        imagens_ref=None, texto_contexto=None, descricao_anterior=None, _ev=None,
     ):
+        _ev = _ev if _ev is not None else {}
+        if tem_anexo_imagem:
+            _ev["anexo"] = "imagem"
         # Motor oculto de imagem: refina o pedido em uma descricao visual e chama
         # a engine de imagem do Open WebUI (configurada para o Gemini).
         #
@@ -3311,6 +3453,8 @@ class Pipe:
 
         imagens_ref = imagens_ref or []
         if tem_anexo_imagem and not imagens_ref:
+            _ev["desfecho"] = "recusa"
+            _ev["recusa_cat"] = "anexo_inutil"
             return (
                 "Recebi um anexo, mas nao consegui usa-lo como referencia. "
                 "Descreva o que voce quer (tema, cores, elementos) que eu gero."
@@ -3378,6 +3522,8 @@ class Pipe:
         refinada = prompt_visual.strip()
         if refinada.startswith("SEM_IMAGEM:"):
             resto = refinada[len("SEM_IMAGEM:"):].strip().strip("<>").strip()
+            _ev["desfecho"] = "recusa"
+            _ev["recusa_cat"] = "sem_imagem"
             return resto or "Descreva a imagem que voce quer gerar."
 
         if not prompt_visual:
@@ -3390,6 +3536,8 @@ class Pipe:
         urls = [im.get("url") for im in (imagens or []) if im.get("url")]
         if not urls:
             log.error("chatnd: engine de imagem nao devolveu URL")
+            _ev["desfecho"] = "erro"
+            _ev["erro_cat"] = "imagem_sem_url"
             return "Nao consegui gerar a imagem agora. Tente novamente em instantes."
 
         partes = [_MARCADOR_IMAGEM + " " + prompt_visual]
@@ -3408,6 +3556,22 @@ class Pipe:
 
     async def pipe(self, body, __user__, __request__, __event_emitter__=None,
                    __task__=None, __files__=None, __metadata__=None):
+        # WRAPPER DE ANALYTICS (1.52.0 / Fatia 1a). _ev acumula categorias content-free ao
+        # longo do turno; o registro roda UMA vez no finally, best-effort. A resposta do
+        # usuario NUNCA passa por codigo de analytics: o wrapper devolve exatamente o que
+        # _pipe_impl devolveu, e o registro acontece DEPOIS, no finally. Byte-identico com
+        # analytics on/off por construcao (nao por promessa).
+        _ev = {}
+        try:
+            return await self._pipe_impl(
+                body, __user__, __request__, __event_emitter__, __task__,
+                __files__, __metadata__, _ev,
+            )
+        finally:
+            await self._registrar(_ev)
+
+    async def _pipe_impl(self, body, __user__, __request__, __event_emitter__=None,
+                         __task__=None, __files__=None, __metadata__=None, _ev=None):
         # __files__ / __metadata__ (1.46.0): DECLARAR e obrigatorio para receber.
         # BUG DE PRODUCAO que isto conserta: o pipe lia body['metadata']['files'], mas o
         # Open WebUI faz form_data.pop('metadata') ANTES de montar o body (functions.py:
@@ -3417,6 +3581,11 @@ class Pipe:
         # aparencia de publicado. Mesma licao do __task__ na 1.32.0: "o pipe so precisava
         # DECLARAR o parametro".
         user = await Users.get_user_by_id(__user__["id"])
+        if _ev is None:
+            _ev = {}
+        _ev["user_hash"] = _analytics_user_hash(
+            (__user__ or {}).get("id"), self.valves.ANALYTICS_USER_SALT
+        )
         # Fallback ao body para caminhos que nao passam por functions.py (API direta).
         _meta = __metadata__ if isinstance(__metadata__, dict) else (
             (body or {}).get("metadata") or {}
@@ -3453,6 +3622,7 @@ class Pipe:
         # sintoma, nao por precaucao.
         # ---------------------------------------------------------------------
         if __task__:
+            _ev["rota"] = "tarefa_interna"
             body["model"] = self.valves.ROUTER_MODEL
             log.info(
                 "chatnd: tarefa interna '%s' -> %s (sem roteador, sem RAG)",
@@ -3521,6 +3691,9 @@ class Pipe:
                 )
                 categoria = "geral"
 
+        # Veredito do classificador (ANTES das travas) - a divergencia classificador
+        # vs rota final e derivada disto no relatorio (1b).
+        _ev["classificador"] = categoria
         # ---------------------------------------------------------------------
         # AS DUAS TRAVAS DETERMINISTICAS. Existem porque o juiz e um LLM e o desenho
         # de UMA fronteira ("e da Nidum?") poe TODO o peso nela. O custo dos dois
@@ -3541,6 +3714,7 @@ class Pipe:
         if categoria == "geral" and _tem_marca_temporal(texto):
             categoria = "documentos"
             log.info("chatnd: trava temporal -> geral vira documentos")
+            _ev["trava"] = "temporal"
 
         # TRAVA 2 (1.31.0) - MENCAO EXPLICITA A NIDUM. Se a pessoa escreveu "Nidum",
         # o assunto e a Nidum - nao ha juizo a fazer. Cobre o pior caso concreto:
@@ -3550,6 +3724,7 @@ class Pipe:
         if categoria == "geral" and _menciona_nidum(texto):
             categoria = "documentos"
             log.info("chatnd: trava 'menciona Nidum' -> geral vira documentos")
+            _ev["trava"] = "menciona_nidum"
 
         # TRAVA 3 (1.34.0) - VOCABULARIO PROPRIO DA NIDUM. Existe porque o classificador
         # NAO SABE que "fazer da casa um ninho" e frase do Documento Fundador - e nenhuma
@@ -3561,6 +3736,7 @@ class Pipe:
         ):
             categoria = "documentos"
             log.info("chatnd: trava 'termo canonico' -> geral vira documentos")
+            _ev["trava"] = "termo_canonico"
 
         # TRAVA 4 (1.40.0) - PEDIDO DE ARQUIVO. Simetrica as tres de cima, mas resgata
         # PARA 'arquivo' (nao para 'documentos'). Bug real: "transforme isso num html com a
@@ -3571,6 +3747,7 @@ class Pipe:
         if categoria in ("documentos", "geral") and _pede_arquivo(texto):
             log.info("chatnd: trava 'pede arquivo' -> %s vira arquivo", categoria)
             categoria = "arquivo"
+            _ev["trava"] = "pede_arquivo"
 
         # TRAVA 5 (1.44.0) - ANEXO + TRANSFORMACAO. Bug real: 3 PPTX anexados + "mantenha o
         # conteudo original, refaca o design" caiu em 'documentos' - e o canal de
@@ -3584,6 +3761,7 @@ class Pipe:
                     "chatnd: trava 'anexo + transformacao' -> %s vira arquivo", categoria
                 )
                 categoria = "arquivo"
+                _ev["trava"] = "anexo_transformacao"
 
         # TRAVA 6 (1.50.0) - IMAGEM ANEXADA + TRANSFORMACAO -> rota 'imagem'.
         # Bug real: uma IMAGEM anexada + "refaca o design desse material" foi classificada
@@ -3609,10 +3787,15 @@ class Pipe:
                         "vira imagem (nenhum formato de documento nomeado)"
                     )
                     categoria = "imagem"
+                    _ev["trava"] = "imagem_anexada"
 
         log.info(
             "chatnd: roteador -> %s (classificador=%r)", categoria, saida or "(atalho)"
         )
+        # ROTA FINAL + inicio do cronometro (latencia = tempo de geracao, nao de
+        # roteamento). Best-effort: se algo falhar aqui, _registrar deixa latencia NULL.
+        _ev["rota"] = categoria
+        _ev["t0"] = time.monotonic()
 
         # Triade: so em 'documentos' - a UNICA rota que carrega a base. 'raciocinio'
         # SAIU do gate na 1.30.0 (era "documentos ou raciocinio"): ele NAO faz RAG (o
@@ -3653,7 +3836,7 @@ class Pipe:
                 return await self._gerar_imagem(
                     __request__, user, texto, __user__,
                     tem_anexo_imagem, imagens_ref,
-                    texto_contexto, descricao_anterior,
+                    texto_contexto, descricao_anterior, _ev,
                 )
             except Exception as e:
                 log.exception("chatnd: falha na rota de imagem")
@@ -3707,6 +3890,8 @@ class Pipe:
                         "chatnd: %d anexo(s) SEM texto extraido: %s", len(ilegiveis), nomes
                     )
                     if not anexos:
+                        _ev["desfecho"] = "recusa"
+                        _ev["recusa_cat"] = "ilegivel"
                         return (
                             "Nao consegui LER o material que voce anexou (" + nomes + "), "
                             "entao nao vou gerar o arquivo - inventar o conteudo seria "
@@ -3737,6 +3922,8 @@ class Pipe:
                             "chatnd: anexo NAO coube -> %d chars (teto %d, %d bloco(s)) | %s",
                             soma, teto, n_blocos, detalhe,
                         )
+                        _ev["desfecho"] = "recusa"
+                        _ev["recusa_cat"] = "nao_coube"
                         return (
                             "Nao vou gerar este arquivo porque o material anexado nao "
                             "cabe inteiro no meu limite de leitura - e prefiro avisar a "
@@ -3823,6 +4010,12 @@ class Pipe:
                     else "SEM anexo",
                     "sim" if (texto and usar_acervo) else "nao",
                 )
+                if anexos:
+                    _ev["anexo"] = "codigo" if formato_codigo else "documento"
+                    _ev["anexo_fonte"] = anexos[0].get("origem") or None
+                    _ev["anexo_faixa"] = _analytics_faixa(
+                        sum(a["chars"] for a in anexos)
+                    )
                 saida_arq = await self._gerar_arquivo(
                     __request__, user, msgs, __user__, imagens_anexo, original,
                     formato_codigo,
@@ -3891,5 +4084,7 @@ class Pipe:
         except Exception:
             # Erro duro do motor (ex.: quota/billing) -> aviso em vez de branco.
             log.exception("chatnd: motor de destino lancou excecao")
+            _ev["desfecho"] = "erro"
+            _ev["erro_cat"] = "motor_erro"
             return MENSAGEM_INSTABILIDADE
-        return self._resposta_ou_aviso(resp)
+        return self._resposta_ou_aviso(resp, _ev)

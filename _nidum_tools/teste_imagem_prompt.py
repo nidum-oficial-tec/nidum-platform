@@ -220,7 +220,7 @@ def main():
     ok &= check("nao usa mais so a ultima mensagem para o anexo de imagem",
                 not E.chamada_com(fonte, "_tem_anexo_imagem", "_msg_user"))
     ok &= check("loga quando ha referencia",
-                "rota imagem COM referencia" in E.textos(fonte, "pipe"))
+                "rota imagem COM referencia" in E.textos(fonte, "_pipe_impl"))
 
     print("\nRESULTADO: " + ("ROTA DE IMAGEM OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
