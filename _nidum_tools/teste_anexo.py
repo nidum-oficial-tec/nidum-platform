@@ -364,7 +364,7 @@ def main():
 
     print("== fiacao no codigo ==")
     txt_compl = E.textos(fonte, "_completar_anexos")
-    txt_pipe = E.textos(fonte, "pipe")
+    txt_pipe = E.textos(fonte, "_pipe_impl")
     ok &= check("cadeia de tentativas: metodo existe e busca no banco",
                 E.existe(fonte, "_completar_anexos")
                 and bool(E.chamadas(fonte, "Files.get_file_by_id", dentro="_completar_anexos")))
@@ -372,7 +372,7 @@ def main():
     ok &= check("loga QUAL fonte funcionou",
                 "lido do BANCO" in txt_compl and "via %s" in txt_pipe)
     ok &= check("diagnostico da estrutura roda antes de concluir",
-                bool(E.chamadas(fonte, "_diag_estrutura_anexos", dentro="pipe")))
+                bool(E.chamadas(fonte, "_diag_estrutura_anexos", dentro="_pipe_impl")))
     ok &= check("recusa NAO induz mais a causa errada",
                 "nao consigo distinguir daqui" in txt_pipe
                 and "PDF digitalizado (imagem sem" not in txt_pipe)
@@ -386,7 +386,7 @@ def main():
                 E.chamada_com(fonte, "_texto_de_busca", "_msgs_rota")
                 and not E.chamada_com(fonte, "_texto_de_busca", "body"))
     ok &= check("texto das travas vem do user_prompt",
-                "_texto_usuario_limpo" in E.atribuido_de(fonte, "texto", dentro="pipe"))
+                "_texto_usuario_limpo" in E.atribuido_de(fonte, "texto", dentro="_pipe_impl"))
     ok &= check("aviso quando parte foi ilegivel",
                 "esse material NAO entrou no arquivo" in txt_pipe)
     ok &= check("mensagem de estouro informa quantas partes", "caberia em " in txt_pipe)
@@ -403,10 +403,10 @@ def main():
                 "%s: %d chars" in txt_pipe)
     # A REGRA QUE NAO PODE SER VIOLADA: o anexo nunca e cortado para caber.
     ok &= check("NAO ha truncagem do anexo (nenhuma fatia sobre conteudo/original)",
-                not E.fatia_de(fonte, "conteudo", dentro="pipe")
-                and not E.fatia_de(fonte, "original", dentro="pipe"))
+                not E.fatia_de(fonte, "conteudo", dentro="_pipe_impl")
+                and not E.fatia_de(fonte, "original", dentro="_pipe_impl"))
     ok &= check("acervo condicional pelo canon",
-                "quer_canon" in E.atribuido_de(fonte, "usar_acervo", dentro="pipe"))
+                "quer_canon" in E.atribuido_de(fonte, "usar_acervo", dentro="_pipe_impl"))
     ok &= check("original vai no SISTEMA do gerador",
                 "<original>" in E.textos(fonte, "_gerar_arquivo"))
     ok &= check("valves de orcamento proprias",
