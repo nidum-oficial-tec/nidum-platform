@@ -89,8 +89,9 @@ async def main():
     cols = [r[1] for r in con.execute("PRAGMA table_info(eventos)").fetchall()]
     esperado = {"id", "ts", "user_hash", "rota", "classificador", "trava", "anexo",
                 "anexo_fonte", "anexo_faixa", "formato_saida", "desfecho", "recusa_cat",
-                "erro_cat", "latencia_ms"}
-    ok &= check("as colunas sao EXATAMENTE as 14 do schema aprovado", set(cols) == esperado)
+                "erro_cat", "latencia_ms",
+                "audio", "audio_faixa"}   # VOZ 1.54.0: desfecho + faixa de tamanho
+    ok &= check("as colunas sao EXATAMENTE as 16 do schema (14 + voz)", set(cols) == esperado)
     # Proibidas = substrings que denunciariam uma coluna de CONTEUDO/PII. 'formato_saida'
     # e o ROTULO do formato (pptx/html), nao a saida - por isso 'saida' nao entra aqui; a
     # prova real e o schema exato acima. user_hash e hash, nao id.
@@ -293,6 +294,54 @@ async def main():
     ok &= check("relatorio via gerar_html on-brand",
                 "tool.gerar_html(" in fonte and '"Analytics ChatND"' in fonte)
 
+    print("== VOZ (1.54.0): colunas idempotentes + agregacao + render ==")
+    _m = re.search(r"^def _analytics_write\(.*?(?=^\S)", fonte, re.M | re.S)
+    _wns = {"os": os}
+    exec(_m.group(0), _wns)
+    WRITE_REAL = _wns["_analytics_write"]
+
+    # (a) banco NOVO ja nasce com audio/audio_faixa e grava o desfecho.
+    dbv = os.path.join(tempfile.mkdtemp(prefix="voz_"), "v.db")
+    WRITE_REAL(dbv, {"rota": "arquivo", "audio": "ok", "audio_faixa": "1-5MB"})
+    _c = sqlite3.connect(dbv)
+    _cols = [r[1] for r in _c.execute("PRAGMA table_info(eventos)").fetchall()]
+    ok &= check("banco novo ja tem audio/audio_faixa",
+                "audio" in _cols and "audio_faixa" in _cols)
+    ok &= check("gravou o desfecho do audio (content-free: so estado/faixa)",
+                _c.execute("SELECT audio, audio_faixa FROM eventos").fetchone()
+                == ("ok", "1-5MB"))
+    _c.close()
+
+    # (b) banco PRE-1.54 (14 colunas, SEM audio) -> ALTER idempotente adiciona sem quebrar,
+    # a linha legada fica intacta, e a 2a escrita nao levanta (ALTER ja existe -> engolido).
+    dbold = os.path.join(tempfile.mkdtemp(prefix="voz_"), "old.db")
+    _c = sqlite3.connect(dbold)
+    _c.execute("CREATE TABLE eventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, "
+               "user_hash TEXT, rota TEXT, classificador TEXT, trava TEXT, anexo TEXT, "
+               "anexo_fonte TEXT, anexo_faixa TEXT, formato_saida TEXT, desfecho TEXT, "
+               "recusa_cat TEXT, erro_cat TEXT, latencia_ms INTEGER)")
+    _c.execute("INSERT INTO eventos (rota) VALUES ('geral')")  # evento legado pre-voz
+    _c.commit()
+    _c.close()
+    WRITE_REAL(dbold, {"rota": "arquivo", "audio": "parcial", "audio_faixa": ">5MB"})
+    WRITE_REAL(dbold, {"rota": "geral"})   # 2a escrita: ALTER ja aplicado, nao pode levantar
+    _c = sqlite3.connect(dbold)
+    _cols = [r[1] for r in _c.execute("PRAGMA table_info(eventos)").fetchall()]
+    ok &= check("banco pre-1.54 migrado (ganhou audio, sem migracao manual)", "audio" in _cols)
+    ok &= check("legado intacto + 2 novas gravadas (3 linhas)",
+                _c.execute("SELECT COUNT(*) FROM eventos").fetchone()[0] == 3)
+    _c.close()
+
+    # (c) agregacao LE o audio; render mostra a secao Voz SO quando houve audio.
+    agg_voz = AGG(dbv, 30)
+    ok &= check("agregacao conta o audio por desfecho", agg_voz.get("audio", {}).get("ok") == 1)
+    ok &= check("secao Voz aparece quando ha audio",
+                "Voz (entrada por audio)" in HTML(agg_voz, 30))
+    dbsem = os.path.join(tempfile.mkdtemp(prefix="voz_"), "s.db")
+    WRITE_REAL(dbsem, {"rota": "geral"})   # evento sem audio
+    ok &= check("sem voz -> secao Voz NAO aparece (nao polui o relatorio)",
+                "Voz (entrada por audio)" not in HTML(AGG(dbsem, 30), 30))
+
     print("== ESCOPO: nenhum nome indefinido (o bug 'messages' da 1.53.0) ==")
     for fn in ("_pipe_impl", "_registrar", "_relatorio_analytics", "_ler_bytes_storage",
                "_completar_anexos", "_resposta_ou_aviso", "_gerar_arquivo",
@@ -300,7 +349,7 @@ async def main():
         indef = E.nomes_indefinidos(fonte, fn)
         ok &= check("%s: sem nome indefinido (%s)" % (fn, indef or "ok"), not indef)
 
-    print("\nRESULTADO: " + ("ANALYTICS 1a+1b OK" if ok else "HOUVE FALHA"))
+    print("\nRESULTADO: " + ("ANALYTICS 1a+1b+voz OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
 
 
