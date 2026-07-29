@@ -168,3 +168,59 @@ def fatia_de(fonte, alvo, dentro=None):
             if isinstance(base, ast.Name) and base.id == alvo:
                 return True
     return False
+
+
+def nomes_indefinidos(fonte, nome_funcao):
+    # Nomes CARREGADOS numa funcao que nao estao LIGADOS (param/atribuicao/import/global)
+    # nem sao de modulo nem builtin. Pega a classe "undefined name" que o py_compile NAO
+    # pega (Python resolve nomes em runtime) - foi o bug 'messages' da 1.53.0. Nao e um
+    # pyflakes completo, mas sobre-aproxima o "ligado" (inclui locais de funcs aninhadas)
+    # para nao dar falso positivo, e ainda assim acusa um nome que nunca e definido.
+    import builtins
+    arv = arvore(fonte)
+    mod = set(dir(builtins)) | {"self", "cls", "__file__", "__name__", "__doc__"}
+    for no in arv.body:
+        if isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            mod.add(no.name)
+        elif isinstance(no, (ast.Import, ast.ImportFrom)):
+            for a in no.names:
+                mod.add((a.asname or a.name).split(".")[0])
+        elif isinstance(no, ast.Assign):
+            for t in no.targets:
+                for nn in ast.walk(t):
+                    if isinstance(nn, ast.Name):
+                        mod.add(nn.id)
+        elif isinstance(no, ast.AnnAssign) and isinstance(no.target, ast.Name):
+            mod.add(no.target.id)
+    fn = _achar_funcao(arv, nome_funcao)
+    if fn is None:
+        return {"<funcao nao encontrada: %s>" % nome_funcao}
+    ligados = set()
+    a = fn.args
+    for x in list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs):
+        ligados.add(x.arg)
+    if a.vararg:
+        ligados.add(a.vararg.arg)
+    if a.kwarg:
+        ligados.add(a.kwarg.arg)
+    carregados = set()
+    for no in ast.walk(fn):
+        if isinstance(no, ast.Name):
+            if isinstance(no.ctx, ast.Store):
+                ligados.add(no.id)
+            elif isinstance(no.ctx, ast.Load):
+                carregados.add(no.id)
+        elif isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            ligados.add(no.name)
+        elif isinstance(no, ast.arg):
+            ligados.add(no.arg)
+        elif isinstance(no, (ast.Global, ast.Nonlocal)):
+            ligados.update(no.names)
+        elif isinstance(no, ast.ExceptHandler) and no.name:
+            ligados.add(no.name)
+        elif isinstance(no, (ast.Import, ast.ImportFrom)):
+            # imports LOCAIS (dentro da funcao) ligam o nome ali - ex.: 'import sqlite3',
+            # 'from open_webui.models.files import Files'.
+            for a in no.names:
+                ligados.add((a.asname or a.name).split(".")[0])
+    return carregados - ligados - mod

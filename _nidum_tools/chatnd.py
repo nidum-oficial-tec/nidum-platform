@@ -1,9 +1,26 @@
 """
 title: ChatND
 author: Nidum
-version: 1.53.0
+version: 1.53.1
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
 changelog:
+  1.53.1:
+    - HOTFIX de DOIS bugs de nome indefinido que os testes offline nao pegavam (py_compile
+      passa porque Python resolve nomes em runtime). Achados por um verificador de ESCOPO
+      novo (teste_estrutura.nomes_indefinidos, via AST) - agora na suite.
+    - BUG 1 (visivel, 1.53.0/1b): a deteccao do /analytics usava 'messages', que NAO existe
+      em _pipe_impl (o pipe usa body.get('messages')). Rodava em TODA mensagem antes do gate
+      de admin -> NameError em toda geracao normal, nao so no /analytics. Corrigido para
+      body.get('messages').
+    - BUG 2 (SILENCIOSO, existia desde a 1.52.0/1a): 'os' era usado (os.path) em _registrar,
+      _relatorio_analytics e _analytics_agregar mas NUNCA importado no modulo. No _registrar
+      o NameError era ENGOLIDO pelo best-effort -> o store da 1a NUNCA GRAVOU em producao. A
+      "amostra jovem" que esperavamos ver nao era jovem: era vazia por falha silenciosa. O
+      teste offline mascarava porque injetava 'os' no namespace. Corrigido: import os no topo.
+    - LICAO: best-effort protege o usuario MAS esconde a propria falha. O verificador de
+      escopo e a rede contra a classe (undefined name) que compile+runtime-swallow ocultam.
+    - CONSEQUENCIA para a validacao: o relogio dos "dados ricos" so comeca a contar quando a
+      1.53.1 estiver no ar - antes disso o store estava vazio por bug, nao por pouco uso.
   1.53.0:
     - ANALYTICS Fatia 1b: relatorio /analytics (SO ADMIN). Le o store da 1a e entrega um
       HTML on-brand (via gerar_html). Comando detectado ANTES do roteamento, no mesmo
@@ -986,6 +1003,7 @@ changelog:
 # Apenas ASCII no codigo, de proposito (evita corrupcao em copy-paste).
 
 import asyncio
+import os
 import time
 import datetime
 import json
@@ -3873,7 +3891,7 @@ class Pipe:
         # deteccao NEM dispara (falta o papel), a mensagem cai no roteamento normal e ele
         # nao ve que o comando existe. N validado (_analytics_parse): lixo/negativo/gigante
         # viram mensagem clara, nunca varrem o banco.
-        _an = _analytics_parse(_ultimo_texto_usuario(messages))
+        _an = _analytics_parse(_ultimo_texto_usuario(body.get("messages")))
         if _an is not None and getattr(user, "role", "") == "admin":
             _ev["rota"] = "analytics"
             if isinstance(_an, tuple):

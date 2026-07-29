@@ -293,6 +293,13 @@ async def main():
     ok &= check("relatorio via gerar_html on-brand",
                 "tool.gerar_html(" in fonte and '"Analytics ChatND"' in fonte)
 
+    print("== ESCOPO: nenhum nome indefinido (o bug 'messages' da 1.53.0) ==")
+    for fn in ("_pipe_impl", "_registrar", "_relatorio_analytics", "_ler_bytes_storage",
+               "_completar_anexos", "_resposta_ou_aviso", "_gerar_arquivo",
+               "_gerar_imagem", "_analytics_agregar", "_analytics_html"):
+        indef = E.nomes_indefinidos(fonte, fn)
+        ok &= check("%s: sem nome indefinido (%s)" % (fn, indef or "ok"), not indef)
+
     print("\nRESULTADO: " + ("ANALYTICS 1a+1b OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
 
