@@ -14,7 +14,7 @@ import teste_estrutura as E
 _DIR = os.path.dirname(os.path.abspath(__file__))
 CAM = os.path.join(_DIR, "chatnd.py")
 FUNCOES = (
-    "_pede_arquivo",
+    "_pede_arquivo", "_eh_codigo", "_bloco_codigo",
     "_anexos_recentes", "_texto_usuario_limpo", "_chars_injetados", "_bloco_original",
     "_pede_transformacao", "_normalizar_ascii", "_msgs_sem_imagem",
     "_eh_imagem", "_cortar_em_blocos", "_msgs_com_pedido_limpo",
@@ -37,6 +37,8 @@ def carregar():
         m = re.search(r"^" + const + r" = \(.*?^\)", fonte, re.M | re.S)
         exec(m.group(0), ns)
     m = re.search(r"^_RE_PEDE_ARQUIVO = re\.compile\(.*?^\)", fonte, re.M | re.S)
+    exec(m.group(0), ns)
+    m = re.search(r'^_EXT_CODIGO = \(.*?\)', fonte, re.M | re.S)
     exec(m.group(0), ns)
     return ns, fonte
 
@@ -181,6 +183,64 @@ def main():
     bs = CORTE(slides, 45)
     ok &= check("corta em fronteira de 'Slide N:' quando existe",
                 all(not x.startswith("Desenvolvimento") for x in bs[1:]) and len(bs) > 1)
+
+    print("== FAMILIA CODIGO (1.51.0): fonte = bytes do Storage, nao texto achatado ==")
+    COD = ns["_eh_codigo"]
+    BCOD = ns["_bloco_codigo"]
+    for f in ("app.html", "form.HTM", "estilo.css", "logica.js", "dados.json",
+              "config.xml", "notas.md", "leiame.txt", "planilha.csv"):
+        ok &= check("familia codigo: %r" % f, COD(f) != "")
+    ok &= check("html -> ext 'html'", COD("x.html") == "html")
+    for f in ("foto.svg", "deck.pptx", "doc.docx", "planilha.xlsx", "arquivo.pdf",
+              "imagem.png"):
+        ok &= check("NAO e codigo (svg/binario/imagem): %r" % f, COD(f) == "")
+    ok &= check("svg fica FORA (segue como imagem, decisao registrada)", COD("a.svg") == "")
+
+    # o bloco de codigo preserva o conteudo LITERAL (com <script>)
+    src = '<button onclick="salvar()">ok</button><script>function salvar(){return 1}</script>'
+    b = BCOD([{"nome": "app.html", "chars": len(src), "conteudo": src}])
+    ok &= check("bloco preserva <script> literal", "<script>" in b and "function salvar" in b)
+    ok &= check("bloco preserva onclick", "onclick=" in b)
+    ok &= check("bloco nomeia o arquivo", "app.html" in b)
+
+    print("== fiacao do canal de codigo ==")
+    ok &= check("_anexos_recentes marca 'codigo' e 'ext'",
+                '"codigo": bool(ext_codigo)' in fonte and '"ext": ext_codigo' in fonte)
+    ok &= check("codigo IGNORA o data.content achatado (forca Storage)",
+                "o data.content vem ACHATADO" in fonte and "Forcamos" in fonte)
+    ok &= check("_completar_anexos le os BYTES do Storage para codigo",
+                'if a.get("codigo"):' in fonte
+                and "self._ler_bytes_storage(fo)" in fonte)
+    ok &= check("_ler_bytes_storage usa Storage.get_file (bytes brutos, nao data.content)",
+                "Storage.get_file(caminho)" in fonte
+                and 'open(local, "rb")' in fonte)
+    ok &= check("leitura do Storage em thread (nao trava o loop / toca o R2)",
+                "asyncio.to_thread(_ler)" in fonte)
+    ok &= check("checagem de acesso (dono/admin) VALE para o codigo tambem",
+                # o branch de codigo esta DEPOIS do continue de acesso no mesmo loop
+                fonte.index('if a.get("codigo"):')
+                > fonte.index('pertence a outro usuario'))
+    ok &= check("_gerar_arquivo recebe formato_codigo",
+                "formato_codigo" in E.assinatura(fonte, "_gerar_arquivo"))
+    ok &= check("edicao de codigo usa a instrucao de PRESERVACAO literal",
+                "_INSTRUCAO_CODIGO" in fonte and "<codigo_original>" in fonte)
+    ok &= check("ROUND-TRIP: formato_codigo trava o tipo (nao vira pptx)",
+                "ROUND-TRIP: editar .html devolve .html" in fonte
+                and 'tipo = "codigo"' in fonte)
+    ok &= check("despacho chama gerar_codigo (modo preservacao)",
+                E.chamada_com(fonte, "tool.gerar_codigo", "titulo"))
+    ok &= check("DEFAULT SEGURO: formato_codigo inicializado FORA do bloco de anexo",
+                'formato_codigo = ""   # DEFAULT SEGURO' in fonte)
+    ok &= check("sem-anexo nunca vira codigo (o caso comum 'gere um pptx')",
+                # a unica atribuicao != "" esta sob a condicao de todos-codigo
+                fonte.count('formato_codigo = next(iter(_exts))') == 1)
+    ok &= check("_dados_uteis aceita tipo 'codigo'",
+                'if tipo == "codigo":' in fonte)
+    ok &= check("round-trip so quando TODOS os anexos sao codigo de 1 extensao",
+                "len(_exts) == 1 and all(a.get" in fonte)
+    ok &= check("a instrucao proibe placeholder de logica",
+                "logica ilustrativa" in fonte and "nunca instrucao" in fonte.lower()
+                or "NUNCA substitua logica" in fonte)
 
     print("== O BUG DE PRODUCAO (1.46.0): body NAO tem metadata ==")
     # functions.py:209 faz form_data.pop('metadata') ANTES de montar o body do pipe, e

@@ -1,10 +1,21 @@
 """
 title: Gerador de Arquivos Nidum
 author: Nidum
-version: 2.5.0
+version: 2.6.0
 description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Insere imagens anexadas pelo usuario. Devolve link de download nativo.
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
+  2.6.0:
+    - gerar_codigo (MODO PRESERVACAO; par do pipe chatnd 1.51.0). Grava codigo-fonte
+      VERBATIM, sem injetar marca nem editor - para EDITAR o app do usuario (HTML com
+      <script>/handlers) preservando o comportamento. Ao contrario do gerar_html, NAO
+      chama _injetar_marca_html (repintaria o CSS do app) nem _injetar_editor (o
+      contenteditable no body briga com os campos do formulario; o app ja tem os proprios
+      controles). O que entra e o que sai, byte a byte.
+    - NAO passa por _coerce: ele faz json.loads, e um .json literal viraria um dict
+      reserializado (aspas trocadas) - o oposto de verbatim. Content-type por extensao
+      (familia texto: html/htm/css/js/json/xml/md/txt/csv). Ext fora da familia -> .txt,
+      com log (binario nao vem para ca - exige parser, fatia futura).
   2.5.0:
     - IMAGEM ANEXADA PELO USUARIO (capacidade NOVA; par do pipe chatnd 1.43.0 - republicar
       os dois juntos). Os metodos gerar_pptx, gerar_docx, gerar_pdf, gerar_html e
@@ -1111,6 +1122,53 @@ class Tools:
                                    versao, imagens)
         except Exception:
             return _erro_limpo("gerar_pdf")
+
+    # Content-type por extensao para o MODO PRESERVACAO (gerar_codigo). So familia
+    # texto/codigo - o que "e o proprio codigo-fonte". Binario (xlsx/pptx) NAO entra:
+    # precisa de parser, e outra fatia (documentada, nao construida).
+    _CT_CODIGO = {
+        "html": "text/html", "htm": "text/html", "css": "text/css",
+        "js": "text/javascript", "json": "application/json", "xml": "application/xml",
+        "md": "text/markdown", "txt": "text/plain", "csv": "text/csv",
+    }
+
+    async def gerar_codigo(
+        self, titulo: str, conteudo: str, ext: str = "html", __user__: dict = None,
+        ecossistema: str = "", versao: int = 1
+    ) -> str:
+        """MODO PRESERVACAO: grava codigo-fonte VERBATIM, sem marca e sem editor.
+
+        Existe para EDITAR arquivo do usuario (ex.: um app HTML com <script> e handlers)
+        preservando o comportamento. Ao contrario do gerar_html, NAO injeta a identidade
+        Nidum (repintaria o CSS do app) nem a barra de edicao (o contenteditable no body
+        briga com os campos de formulario, e o app ja tem os proprios controles). O que
+        entra e o que sai - byte a byte, sem reescrever nada.
+
+        :param conteudo: o arquivo INTEIRO ja editado (string), tal como deve ser salvo.
+        :param ext: extensao da familia texto/codigo (html/css/js/json/xml/md/txt/csv).
+        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        """
+        try:
+            # NAO passa por _coerce: ele faz json.loads e um arquivo .json literal viraria
+            # um dict reserializado (aspas trocadas) - o oposto de "verbatim". Codigo e
+            # string crua, ponto.
+            c = conteudo if isinstance(conteudo, str) else str(conteudo or "")
+            if not c.strip():
+                return _diag_entrada_vazia("gerar_codigo", "conteudo", conteudo)
+            e = str(ext or "html").lstrip(".").lower()
+            ct = self._CT_CODIGO.get(e)
+            if ct is None:
+                # Fora da familia texto -> nao e para ca (binario precisa de parser).
+                log.warning("gerador_nidum: gerar_codigo com ext %r fora da familia; "
+                            "tratando como txt", e)
+                e, ct = "txt", "text/plain"
+            nome = _nome_padrao(titulo, ecossistema, e, versao,
+                                self.valves.ECOSSISTEMA_PADRAO)
+            data = c.encode("utf-8")
+            link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
+            return "Arquivo gerado com sucesso. Link para download: " + link
+        except Exception:
+            return _erro_limpo("gerar_codigo")
 
     async def gerar_html(
         self, titulo: str, html: str, __user__: dict = None,
