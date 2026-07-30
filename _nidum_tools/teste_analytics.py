@@ -90,13 +90,19 @@ async def main():
     esperado = {"id", "ts", "user_hash", "rota", "classificador", "trava", "anexo",
                 "anexo_fonte", "anexo_faixa", "formato_saida", "desfecho", "recusa_cat",
                 "erro_cat", "latencia_ms",
-                "audio", "audio_faixa"}   # VOZ 1.54.0: desfecho + faixa de tamanho
-    ok &= check("as colunas sao EXATAMENTE as 16 do schema (14 + voz)", set(cols) == esperado)
+                "audio", "audio_faixa",                       # VOZ 1.54.0
+                "chars_sistema", "chars_acervo", "chars_anexo", "chars_historico",
+                "tok_classif_prompt", "tok_classif_compl", "tok_gerador_prompt",
+                "tok_gerador_compl", "classif_provedor", "origem_modelo"}   # TOKEN 2a/1.55.0
+    ok &= check("as colunas sao EXATAMENTE as 26 do schema (16 + token 2a)",
+                set(cols) == esperado)
     # Proibidas = substrings que denunciariam uma coluna de CONTEUDO/PII. 'formato_saida'
     # e o ROTULO do formato (pptx/html), nao a saida - por isso 'saida' nao entra aqui; a
-    # prova real e o schema exato acima. user_hash e hash, nao id.
+    # prova real e o schema exato acima. user_hash e hash, nao id. 'prompt' SAIU da lista:
+    # tok_*_prompt e CONTAGEM de token (inteiro), nao o teor do prompt - o schema exato
+    # acima e a prova real de content-free.
     proibidas = ("texto", "conteudo", "content", "pedido", "nome_arquivo", "filename",
-                 "query", "prompt", "mensagem", "usuario")
+                 "query", "mensagem", "usuario")
     ok &= check("NENHUMA coluna aceita conteudo/PII (%s)" % ",".join(cols),
                 not any(any(pb in c.lower() for pb in proibidas) for c in cols))
     linha = con.execute("SELECT rota, anexo_faixa, latencia_ms, desfecho, user_hash "
@@ -282,7 +288,8 @@ async def main():
 
     print("== 1b: fiacao (admin-gated, antes do roteamento, best-effort) ==")
     ok &= check("comando detectado ANTES do roteador",
-                fonte.index("_analytics_parse(_ultimo_texto_usuario") < fonte.index("rota = {"))
+                fonte.index("_analytics_parse(_ultimo_texto_usuario")
+                < fonte.index('"geral": self.valves.MODELO_GERAL'))
     ok &= check("gate de admin: coautor comum nao dispara",
                 'and getattr(user, "role", "") == "admin"' in fonte)
     ok &= check("leitura best-effort (mensagem honesta, nao levanta)",
@@ -341,6 +348,73 @@ async def main():
     WRITE_REAL(dbsem, {"rota": "geral"})   # evento sem audio
     ok &= check("sem voz -> secao Voz NAO aparece (nao polui o relatorio)",
                 "Voz (entrada por audio)" not in HTML(AGG(dbsem, 30), 30))
+
+    print("== TOKEN 2a (1.55.0): colunas idempotentes + agregacao + render ==")
+    # (a) banco NOVO ja nasce com as 10 colunas de token e grava os inteiros.
+    dbt = os.path.join(tempfile.mkdtemp(prefix="tok_"), "t.db")
+    WRITE_REAL(dbt, {"rota": "documentos", "chars_sistema": 1000, "chars_acervo": 7000,
+                     "chars_historico": 2000, "tok_classif_prompt": 1500,
+                     "tok_classif_compl": 4, "classif_provedor": "openai",
+                     "origem_modelo": "chatnd"})
+    WRITE_REAL(dbt, {"rota": "arquivo", "chars_sistema": 4000, "chars_acervo": 0,
+                     "chars_anexo": 30000, "tok_gerador_prompt": 12000,
+                     "tok_gerador_compl": 800, "origem_modelo": "chico-m1"})
+    _c = sqlite3.connect(dbt)
+    _cols = [r[1] for r in _c.execute("PRAGMA table_info(eventos)").fetchall()]
+    ok &= check("banco novo tem as 10 colunas de token",
+                {"chars_sistema", "chars_acervo", "chars_anexo", "chars_historico",
+                 "tok_classif_prompt", "tok_classif_compl", "tok_gerador_prompt",
+                 "tok_gerador_compl", "classif_provedor", "origem_modelo"} <= set(_cols))
+    ok &= check("gravou os inteiros (content-free)",
+                _c.execute("SELECT chars_acervo, tok_gerador_prompt FROM eventos "
+                           "WHERE rota='arquivo'").fetchone() == (0, 12000))
+    _c.close()
+
+    # (b) banco pre-2a (schema 16 colunas, sem token) -> ALTER idempotente adiciona.
+    dbold2 = os.path.join(tempfile.mkdtemp(prefix="tok_"), "old2.db")
+    _c = sqlite3.connect(dbold2)
+    _c.execute("CREATE TABLE eventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, "
+               "user_hash TEXT, rota TEXT, classificador TEXT, trava TEXT, anexo TEXT, "
+               "anexo_fonte TEXT, anexo_faixa TEXT, formato_saida TEXT, desfecho TEXT, "
+               "recusa_cat TEXT, erro_cat TEXT, latencia_ms INTEGER, audio TEXT, "
+               "audio_faixa TEXT)")
+    _c.execute("INSERT INTO eventos (rota) VALUES ('geral')")
+    _c.commit()
+    _c.close()
+    WRITE_REAL(dbold2, {"rota": "documentos", "chars_acervo": 5000,
+                        "tok_classif_prompt": 900, "classif_provedor": "anthropic"})
+    WRITE_REAL(dbold2, {"rota": "geral"})   # 2a escrita: ALTER ja aplicado, nao levanta
+    _c = sqlite3.connect(dbold2)
+    _cols = [r[1] for r in _c.execute("PRAGMA table_info(eventos)").fetchall()]
+    ok &= check("banco pre-2a migrado (ganhou chars_acervo/token)",
+                "chars_acervo" in _cols and "classif_provedor" in _cols)
+    ok &= check("legado intacto + 2 novas (3 linhas)",
+                _c.execute("SELECT COUNT(*) FROM eventos").fetchone()[0] == 3)
+    _c.close()
+
+    # (c) agregacao LE token; render mostra a secao Token so quando ha medicao.
+    agg_tok = AGG(dbt, 30)
+    tkn = agg_tok.get("token", {})
+    ok &= check("agregacao expoe chars por rota",
+                tkn.get("chars_rota", {}).get("documentos", {}).get("acervo") == 7000)
+    ok &= check("agregacao expoe usage do classificador",
+                tkn.get("classif", {}).get("prompt_total") == 1500)
+    ok &= check("classif_provedor derivado agregado (resolve o conflito com dado)",
+                tkn.get("provedor", {}).get("openai") == 1)
+    ok &= check("origem separa o Chico",
+                tkn.get("origem", {}).get("chico-m1") == 1
+                and tkn.get("origem", {}).get("chatnd") == 1)
+    _html_tok = HTML(agg_tok, 30)
+    ok &= check("secao Token aparece quando ha medicao",
+                "Token / Orcamento" in _html_tok)
+    ok &= check("render Token e content-free (so inteiros/rotulos, ASCII)",
+                not [ch for ch in _html_tok if ord(ch) > 127])
+    ok &= check("ressalva do stream/base-model impressa",
+                "STREAM" in _html_tok and "BASE-MODEL" in _html_tok)
+    dbsem2 = os.path.join(tempfile.mkdtemp(prefix="tok_"), "s2.db")
+    WRITE_REAL(dbsem2, {"rota": "imagem"})   # sem nenhuma metrica de token
+    ok &= check("sem medicao -> secao Token NAO aparece",
+                "Token / Orcamento" not in HTML(AGG(dbsem2, 30), 30))
 
     print("== ESCOPO: nenhum nome indefinido (o bug 'messages' da 1.53.0) ==")
     for fn in ("_pipe_impl", "_registrar", "_relatorio_analytics", "_ler_bytes_storage",
