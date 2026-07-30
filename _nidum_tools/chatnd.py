@@ -1,9 +1,28 @@
 """
 title: ChatND
 author: Nidum
-version: 1.53.1
-description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). O usuario nao escolhe o motor.
+version: 1.54.0
+description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.54.0:
+    - VOZ - ENTRADA (A+B). A pessoa anexa um audio; ele e transcrito (Whisper LOCAL, o
+      transcription_handler do OWUI) A MONTANTE do roteamento e vira o PEDIDO. O
+      classificador, as travas, a rota e o modelo leem o que foi DITO, igual a texto
+      digitado: "gere um pptx" falado roteia para arquivo. Se ha texto digitado junto, ele
+      vem primeiro (precedencia de intencao) e o audio entra como [Audio N].
+    - INDEPENDENCIA A|B (dura): A (a transcricao = a funcao) roda e injeta ANTES de qualquer
+      registro; B (analytics = observabilidade) e o _registrar no finally, best-effort. Se B
+      falhar, A ja aconteceu. A transcricao NAO toca analytics - a separacao e estrutural.
+    - CONTENT-FREE (voz tambem): nada do TEOR do audio vai para log ou banco - so contagem,
+      faixa de TAMANHO (proxy de carga) e desfecho (ok/parcial/falhou). Duas colunas novas
+      (audio, audio_faixa) via ALTER TABLE idempotente - o banco 1a existente ganha as
+      colunas sem migracao manual.
+    - HONESTO na falha: nenhum audio entendido -> recusa clara ("nao consegui entender o
+      audio; reenvie ou escreva"), NAO roteia para chute. Parcial -> transcreve o que deu e
+      marca [Audio N: nao entendi] no resto. Audio > 20MB -> avisa que esta longo demais.
+    - ACESSO: transcreve so audio do proprio usuario (ou admin) - mesmo gate dos anexos.
+    - DEFENSIVO: audio via file/id e coberto; se chegar como content-part (base64), o log
+      avisa (caminho nao coberto nesta fatia) para sabermos se o deploy usa a outra forma.
   1.53.1:
     - HOTFIX de DOIS bugs de nome indefinido que os testes offline nao pegavam (py_compile
       passa porque Python resolve nomes em runtime). Achados por um verificador de ESCOPO
@@ -1687,6 +1706,8 @@ def _anexos_recentes(files, messages=None, n=5):
         )
         if _eh_imagem(arq, nome):
             continue          # imagem tem canal proprio (marcadores IMAGEM_N)
+        if _eh_audio(arq, nome):
+            continue          # audio tem canal proprio (transcricao a montante, 1.54.0)
         # CODIGO: o data.content vem ACHATADO (sem <script>) - inutil. Forcamos "" para
         # cair no _completar_anexos, que le os BYTES BRUTOS do Storage (1.51.0).
         ext_codigo = _eh_codigo(nome)
@@ -1785,16 +1806,24 @@ def _analytics_write(db_path, ev):
             "anexo_faixa TEXT, formato_saida TEXT, desfecho TEXT, recusa_cat TEXT, "
             "erro_cat TEXT, latencia_ms INTEGER)"
         )
+        # VOZ (1.54.0): colunas B idempotentes. Um banco 1a existente ganha as colunas sem
+        # migracao manual; se ja existem, o ALTER levanta e e engolido. So o SCHEMA muda -
+        # continua content-free (audio = desfecho, audio_faixa = faixa de tamanho).
+        for _col in ("audio TEXT", "audio_faixa TEXT"):
+            try:
+                con.execute("ALTER TABLE eventos ADD COLUMN " + _col)
+            except Exception:
+                pass
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         con.execute(
             "INSERT INTO eventos (ts, user_hash, rota, classificador, trava, anexo, "
             "anexo_fonte, anexo_faixa, formato_saida, desfecho, recusa_cat, erro_cat, "
-            "latencia_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "latencia_ms, audio, audio_faixa) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ts, ev.get("user_hash"), ev.get("rota"), ev.get("classificador"),
              ev.get("trava"), ev.get("anexo"), ev.get("anexo_fonte"),
              ev.get("anexo_faixa"), ev.get("formato_saida"),
              ev.get("desfecho") or "ok", ev.get("recusa_cat"), ev.get("erro_cat"),
-             ev.get("latencia_ms")),
+             ev.get("latencia_ms"), ev.get("audio"), ev.get("audio_faixa")),
         )
         con.commit()
     finally:
@@ -1903,6 +1932,17 @@ def _analytics_agregar(db_path, dias):
         anexo_fonte = dict(q("SELECT anexo_fonte, COUNT(*) FROM eventos WHERE ts>=? AND "
                              "anexo_fonte IS NOT NULL GROUP BY anexo_fonte", (corte,)))
 
+        # VOZ (1.54.0): DEFENSIVO - a coluna pode nao existir num banco pre-1.54 que ainda
+        # nao recebeu nenhum write (o write faz o ALTER). OperationalError -> pula, sem
+        # quebrar o resto do relatorio.
+        try:
+            audio = dict(q("SELECT audio, COUNT(*) FROM eventos WHERE ts>=? AND audio IS "
+                           "NOT NULL GROUP BY audio", (corte,)))
+            audio_faixa = dict(q("SELECT audio_faixa, COUNT(*) FROM eventos WHERE ts>=? AND "
+                                 "audio_faixa IS NOT NULL GROUP BY audio_faixa", (corte,)))
+        except sqlite3.OperationalError:
+            audio, audio_faixa = {}, {}
+
         estado = "pouco" if total < _LIMIAR_AMOSTRA else "cheio"
         return {
             "estado": estado, "total": total, "dias": dias, "real_total": real_total,
@@ -1911,6 +1951,7 @@ def _analytics_agregar(db_path, dias):
             "div_rec": div_rec, "div_ant": div_ant,
             "recusas": recusas, "erros": erros, "latencia": latencia,
             "anexo_tipo": anexo_tipo, "anexo_fonte": anexo_fonte,
+            "audio": audio, "audio_faixa": audio_faixa,
         }
     finally:
         con.close()
@@ -1985,6 +2026,15 @@ def _analytics_html(agg, dias):
         _h.escape(_an_linha(agg.get("anexo_tipo", {}))),
         _h.escape(_an_linha(agg.get("anexo_fonte", {})))))
 
+    # VOZ (1.54.0): so aparece quando houve entrada por audio - nao polui o relatorio de
+    # quem nao usa. Desfecho (ok/parcial/falhou) e faixa de TAMANHO, nunca o teor.
+    voz = agg.get("audio", {})
+    if voz:
+        linhas.append("<h2>Voz (entrada por audio)</h2><p>Por desfecho: %s &middot; "
+                      "Por faixa: %s</p>" % (
+            _h.escape(_an_linha(voz)),
+            _h.escape(_an_linha(agg.get("audio_faixa", {})))))
+
     return "\n".join(x for x in linhas if x)
 
 
@@ -1997,6 +2047,83 @@ def _eh_imagem(arq, nome):
     return str(nome or "").lower().endswith(
         (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
     )
+
+
+_EXT_AUDIO = (".mp3", ".wav", ".m4a", ".ogg", ".oga", ".webm", ".flac",
+              ".aac", ".opus", ".mp4a")
+
+
+def _eh_audio(arq, nome):
+    # Anexo de AUDIO tem canal proprio (transcricao a montante do roteamento). Nao entra
+    # como documento (seria relatado "ilegivel") nem como imagem.
+    mime = str(((arq.get("meta") or {}).get("content_type") or "")).lower()
+    if mime.startswith("audio/"):
+        return True
+    return str(nome or "").lower().endswith(_EXT_AUDIO)
+
+
+def _audios_recentes(files):
+    # AUDIOS do turno (files com id -> Storage). Espelha _anexos_recentes, mas COLETA o
+    # que aquele descarta. Retorna [{"id","nome"}] na ordem em que foram anexados.
+    saida = []
+    for it in files if isinstance(files, list) else []:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("type") or "file") != "file":
+            continue
+        arq = it.get("file") if isinstance(it.get("file"), dict) else {}
+        nome = (it.get("name") or (arq.get("meta") or {}).get("name")
+                or arq.get("filename") or "audio")
+        if not _eh_audio(arq, nome):
+            continue
+        saida.append({"id": it.get("id") or arq.get("id") or "", "nome": str(nome)})
+    return saida
+
+
+def _audio_em_partes(messages):
+    # DIAGNOSTICO defensivo. O audio pode chegar como PARTE da ultima mensagem do usuario
+    # (type 'audio'/'input_audio' ou mimeType audio/*, em base64) em vez de file com id.
+    # Esta fatia transcreve o caminho de file/id; se for so parte, o log avisa - assim
+    # sabemos se este deploy usa a outra forma, sem construir o caminho as cegas.
+    for m in reversed(messages or []):
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        cont = m.get("content")
+        if isinstance(cont, list):
+            for p in cont:
+                if not isinstance(p, dict):
+                    continue
+                tp = str(p.get("type") or "").lower()
+                mm = str(p.get("mimeType") or p.get("mime_type") or "").lower()
+                if tp in ("audio", "input_audio") or mm.startswith("audio/"):
+                    return True
+        return False   # so a ULTIMA do usuario importa
+    return False
+
+
+def _faixa_audio(nbytes):
+    # Faixa de TAMANHO do audio (proxy honesto de carga: arquivo maior = mais CPU de
+    # transcricao). Content-free: um bucket, nunca duracao exata nem o teor.
+    try:
+        n = int(nbytes or 0)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    mb = n / (1024.0 * 1024.0)
+    if mb < 1:
+        return "<1MB"
+    if mb < 5:
+        return "1-5MB"
+    return ">5MB"
+
+
+def _combinar_voz(digitado, bloco):
+    # PRECEDENCIA DE INTENCAO: o texto DIGITADO (se houver) vem PRIMEIRO - e a intencao
+    # explicita da pessoa ("use tom formal"); o audio entra depois como conteudo/pedido.
+    # Sem texto digitado, so o bloco de audio. PURA - facil de testar a ordem.
+    d = digitado.strip() if isinstance(digitado, str) else ""
+    return ((d + "\n\n") if d else "") + (bloco or "")
 
 
 _EXT_CODIGO = ("html", "htm", "css", "js", "json", "xml", "md", "txt", "csv")
@@ -3451,6 +3578,89 @@ class Pipe:
                           getattr(fo, "filename", "?"))
             return ""
 
+    async def _caminho_audio_storage(self, fid, user):
+        # CAMINHO LOCAL do audio (baixando do R2/S3 se preciso, como o endpoint /content),
+        # com o MESMO gate de acesso dos anexos: dono ou admin. So o id (nunca o teor) toca
+        # o log. Retorna "" em qualquer falha (o chamador trata como "nao entendi").
+        if not fid:
+            return ""
+        try:
+            from open_webui.models.files import Files
+            from open_webui.storage.provider import Storage
+        except Exception:
+            log.exception("chatnd: nao consegui importar Files/Storage para o audio")
+            return ""
+        try:
+            fo = await Files.get_file_by_id(fid)
+        except Exception:
+            log.exception("chatnd: falha ao localizar o audio no banco")
+            return ""
+        if not fo:
+            log.warning("chatnd: audio nao encontrado no banco")
+            return ""
+        dono = getattr(fo, "user_id", None)
+        if not (getattr(user, "role", "") == "admin"
+                or dono == getattr(user, "id", None)):
+            log.warning("chatnd: audio pertence a outro usuario - nao transcrito")
+            return ""
+        caminho = getattr(fo, "path", None)
+        if not caminho:
+            return ""
+        try:
+            return await asyncio.to_thread(Storage.get_file, caminho)
+        except Exception:
+            log.exception("chatnd: falha ao obter o audio no Storage")
+            return ""
+
+    async def _transcrever_audios(self, request, user, audios):
+        # A (a FUNCAO): transcreve os audios do turno via Whisper LOCAL - o proprio
+        # transcription_handler do OWUI, que despacha por STT_ENGINE e devolve {'text':...}.
+        # Roda em thread la dentro (nao trava o loop). Retorna (bloco_rotulado, resumo).
+        #
+        # CONTENT-FREE: o log/resumo carrega so contagem, faixa de TAMANHO e desfecho -
+        # NUNCA o teor. NAO referencia analytics: a independencia A|B e estrutural (o
+        # registro e do _registrar, no finally).
+        try:
+            from open_webui.routers.audio import transcription_handler
+        except Exception:
+            log.exception("chatnd: nao consegui importar transcription_handler")
+            return "", {"estado": "falhou", "faixa": None, "ok": 0}
+        partes = []
+        ok = 0
+        maior = 0
+        for i, a in enumerate(audios, 1):
+            caminho = await self._caminho_audio_storage(a.get("id"), user)
+            if not caminho:
+                partes.append("[Audio %d: nao consegui acessar]" % i)
+                continue
+            try:
+                tam = os.path.getsize(caminho)
+            except Exception:
+                tam = 0
+            if tam > maior:
+                maior = tam
+            # Limite do transcription_handler (MAX_FILE_SIZE): avisa em vez de estourar.
+            if tam and tam > 20 * 1024 * 1024:
+                partes.append(
+                    "[Audio %d: muito longo para transcrever - reenvie mais curto]" % i)
+                continue
+            try:
+                res = await transcription_handler(request, caminho, {}, user)
+                texto = (res or {}).get("text") if isinstance(res, dict) else ""
+            except Exception:
+                log.exception("chatnd: transcricao do audio %d falhou", i)  # sem o teor
+                texto = ""
+            if texto and str(texto).strip():
+                ok += 1
+                partes.append("[Audio %d]\n%s" % (i, str(texto).strip()))
+            else:
+                partes.append("[Audio %d: nao entendi]" % i)
+        total = len(audios)
+        estado = "ok" if (ok and ok == total) else ("parcial" if ok else "falhou")
+        return "\n\n".join(partes), {
+            "estado": estado, "faixa": _faixa_audio(maior), "ok": ok
+        }
+
     async def _completar_anexos(self, anexos, user):
         # CADEIA DE TENTATIVAS para obter o texto do anexo, com log de QUAL funcionou.
         #   1. body (file.data.content) - so vem preenchido no modo FULL do OWUI
@@ -3886,6 +4096,49 @@ class Pipe:
             return await generate_chat_completion(
                 __request__, body, user, bypass_filter=True
             )
+
+        # -------------------------------------------------------- VOZ - ENTRADA (1.54.0)
+        # AUDIO anexado vira TEXTO A MONTANTE: o pedido falado passa a ser o user_prompt, e
+        # o classificador/travas/rota/modelo leem o que a pessoa DISSE, exatamente como se
+        # tivesse digitado ("gere um pptx" falado roteia para arquivo). Whisper LOCAL.
+        #
+        # Fica DEPOIS de __task__ (tarefa de bastidor - titulo/tags - nao precisa ouvir o
+        # audio, evita transcrever duas vezes) e ANTES do /analytics e do roteador.
+        #
+        # A|B (garantia dura): a transcricao (A) roda e injeta AQUI; o registro em analytics
+        # (B) e do _registrar, la no finally, best-effort. _ev["audio"]=... e escrita de
+        # dict (nao falha); o WRITE, que pode falhar, esta isolado no finally. Se B falhar,
+        # A ja aconteceu. Nada do TEOR e logado nem registrado - so contagem/faixa/desfecho.
+        _audios = _audios_recentes(_files)
+        if _audios:
+            await self._emitir(__event_emitter__, "Transcrevendo seu audio...")
+            _bloco, _res = await self._transcrever_audios(__request__, user, _audios)
+            _ev["audio"] = _res.get("estado")
+            _ev["audio_faixa"] = _res.get("faixa")
+            log.info("chatnd: voz -> %d audio(s), faixa=%s, desfecho=%s (sem o teor)",
+                     len(_audios), _res.get("faixa"), _res.get("estado"))
+            if _res.get("ok"):
+                # texto DIGITADO junto tem precedencia de intencao (vem primeiro); o audio
+                # entra como [Audio N]. Sem texto digitado, so o bloco de audio.
+                _digitado = _ultimo_texto_usuario(body.get("messages"))
+                _combinado = _combinar_voz(_digitado, _bloco)
+                # o pedido PRISTINO passa a ser o combinado: dirige o classificador/travas/
+                # rota (via _meta['user_prompt']) E o modelo (body['messages']). Reusa o
+                # mesmo mecanismo ja testado do pedido limpo (remove os 'files' de brinde).
+                if isinstance(_meta, dict):
+                    _meta["user_prompt"] = _combinado
+                body["messages"] = _msgs_com_pedido_limpo(body.get("messages"), _combinado)
+            else:
+                # NENHUM audio transcreveu -> recusa HONESTA, NAO roteia para chute.
+                _ev["desfecho"] = "recusa"
+                _ev["recusa_cat"] = "audio_ininteligivel"
+                return ("Nao consegui entender o audio que voce enviou. Pode reenviar com "
+                        "menos ruido, ou escrever o pedido que eu ajudo.")
+        elif _audio_em_partes(body.get("messages")):
+            # Audio como PARTE da mensagem (base64), nao file/id. Esta fatia cobre file/id;
+            # o log avisa para sabermos se o deploy usa a outra forma.
+            log.warning("chatnd: recebi audio como content-part (sem id) - caminho nao "
+                        "coberto nesta fatia; nada transcrito")
 
         # COMANDO /analytics (1b) - so ADMIN, ANTES do roteamento. Coautor comum: a
         # deteccao NEM dispara (falta o papel), a mensagem cai no roteamento normal e ele

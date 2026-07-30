@@ -17,7 +17,7 @@ FUNCOES = (
     "_pede_arquivo", "_eh_codigo", "_bloco_codigo",
     "_anexos_recentes", "_texto_usuario_limpo", "_chars_injetados", "_bloco_original",
     "_pede_transformacao", "_normalizar_ascii", "_msgs_sem_imagem",
-    "_eh_imagem", "_cortar_em_blocos", "_msgs_com_pedido_limpo",
+    "_eh_imagem", "_eh_audio", "_cortar_em_blocos", "_msgs_com_pedido_limpo",
     "_transcript", "_texto_de_msg", "_diag_estrutura_anexos",
 )
 
@@ -39,6 +39,8 @@ def carregar():
     m = re.search(r"^_RE_PEDE_ARQUIVO = re\.compile\(.*?^\)", fonte, re.M | re.S)
     exec(m.group(0), ns)
     m = re.search(r'^_EXT_CODIGO = \(.*?\)', fonte, re.M | re.S)
+    exec(m.group(0), ns)
+    m = re.search(r'^_EXT_AUDIO = \(.*?\)', fonte, re.M | re.S)
     exec(m.group(0), ns)
     return ns, fonte
 
