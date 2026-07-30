@@ -4,6 +4,57 @@ Fork do Open WebUI 0.9.6 com o "motor invisivel" ChatND (pipe roteador) e a tool
 de geracao de arquivos. Codigo Nidum vive em `_nidum_tools/`, docs em
 `_nidum_docs/`, scripts de manutencao em `_nidum_manutencao/`.
 
+## Mapa do repositorio (scripts principais)
+
+Versoes vivem no docstring do arquivo e no PAINEL (pipe/tool sao publicados por API,
+nao por deploy) - nao repito numero aqui para nao apodrecer. O que ESTA no ar se le no
+painel; ver a REGRA DA DOC.
+
+- `_nidum_tools/chatnd.py` - o PIPE roteador "ChatND" (classe `Pipe`). Coracao da
+  esteira: classifica o pedido, roteia para 4 rotas (geral / documentos / arquivo /
+  imagem), faz RAG na documentos, chama a tool na arquivo, gera imagem na imagem.
+- `_nidum_tools/gerador_de_arquivos_nidum.py` - a TOOL de geracao de arquivos
+  (pptx/docx/xlsx/pdf/html/codigo). Anexada ao wrapper da rota geral.
+- `_nidum_tools/relatorio_ambientes_nidum.py`, `sharepoint_nidum.py` - tools do
+  "Identificador De Ambientes" (frente separada do roteador).
+- `_nidum_tools/teste_*.py` - banco de provas OFFLINE do pipe/tool (rodam sem subir o
+  OWUI). `teste_estrutura.py` = helpers AST (ex.: `nomes_indefinidos`). Ha suites de
+  travas, datas, anexo, imagens, codigo, analytics, voz, token.
+- `_nidum_manutencao/` - scripts de publicacao/manutencao (ex.: `publicar_tool.py`).
+- `_nidum_docs/` - doc viva (03 arquitetura, 04 dicionario, 07 diario, 08 decisoes...).
+- `backend/`, `editorial/`, `Dockerfile` - o fork OWUI; vai por git push -> Railway.
+
+## Decisoes firmadas da esteira (e o que foi DESCARTADO)
+
+FIRMADO (nao reabrir sem motivo novo):
+- 4 rotas: geral / documentos / arquivo / imagem. Mudar as CATEGORIAS do roteador
+  afeta o "Chico" (motor de outro colaborador que usa o `chatnd` como base model).
+- RAG so na documentos; web so na geral. Documentos e geral NUNCA se cruzam (governanca:
+  "isto e da Nidum?" decide qual, e so uma toca cada fonte).
+- Modelos: geral/documentos = Claude Sonnet (via camada OpenAI-compat da Anthropic);
+  classificador = gpt-5-mini (OpenAI); gerador = gpt-5.1 (OpenAI); embeddings =
+  text-embedding-3-small (OpenAI). Uma chave por provedor, comingled com o Chico.
+- Rota de CONVERSA retorna um StreamingResponse (`_resposta_ou_aviso` ->
+  `_stream_resiliente`); o pipe NAO remonta o texto final, repassa o stream. Rotas
+  arquivo/imagem retornam string.
+- Prioridade absoluta do pipe (o changelog institucionaliza): STREAM INTOCADO,
+  best-effort, a resposta NUNCA degrada por observabilidade ou feature nova.
+- Analytics content-free (SQLite, best-effort, admin-only). Medicao de token (2a)
+  mergeada; trim do acervo so DEPOIS do mapa medido.
+
+DESCARTADO (com o motivo - nao repetir a tentativa):
+- gpt-5-mini na rota geral: inventava consultoria (SPE x SCP) com confianca; geral e
+  Sonnet, medido.
+- Tool-calling para features novas: QUEBRA nos modelos Claude (camada OpenAI-compat:
+  `'str' object has no attribute 'get'`); o pipe nem declara `__tools__`.
+- Catch-all do classificador ("geral = tudo que nao e Nidum"): decisao por eliminacao
+  sobre um vocabulario que o modelo nao conhece; lista fechada e mais honesta.
+- Cache de prompt Anthropic: bloqueado por infra (OWUI fala OpenAI-compat, `cache_control`
+  vira no-op); exige proxy (LiteLLM) ou backend. Frente futura, nao "botao".
+- nidum-voz / OpenAI STT para voz-entrada: Whisper local basta (transcreveu pt 0.997).
+- `ENABLE_WEB_SEARCH=True`: reabriria o caminho pre-pipe que contamina pergunta
+  institucional com a web. Fica False DE PROPOSITO; o pipe busca pela camada de baixo.
+
 ## Documentacao continua (obrigatorio)
 
 Este projeto mantem documentacao viva em `_nidum_docs/`:
