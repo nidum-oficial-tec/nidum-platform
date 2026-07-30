@@ -1,9 +1,34 @@
 """
 title: ChatND
 author: Nidum
-version: 1.54.0
+version: 1.55.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.55.0:
+    - AUDITORIA DE TOKEN - Fatia 2a (MEDIR, sem cortar). Instrumenta o consumo para achar
+      o ponto otimo (gasto compativel com a qualidade) - cortar acervo as cegas reintroduz
+      a classe de bug 'resposta errada por falta de contexto'. So se corta o que a medicao
+      PROVAR que nao e usado. Esta fatia NAO corta nada - so enxerga.
+    - DECOMPOSICAO DO INPUT (o grosso do gasto e INPUT, ~28k tok/req): 4 colunas de chars
+      por turno - chars_sistema (system do pipe), chars_acervo (RAG/web injetado, o alvo do
+      trim), chars_anexo (bloco original), chars_historico (o que a conversa reenvia). O
+      /analytics mostra a COMPOSICAO MEDIA por rota (ex.: acervo = X% do input). Content-free
+      (inteiros, nunca teor). Ressalva: o system prompt do BASE-MODEL (persona Sonnet dos
+      wrappers) e aplicado pelo OWUI DEPOIS do pipe, invisivel daqui - ler no Admin -> Models.
+    - USAGE NAO-STREAM (o 'usage' ja vem de graca e era jogado fora): _extrair_usage, irmao
+      do _extrair_conteudo, DEFENSIVO aos dois provedores (OpenAI prompt_tokens/completion;
+      Anthropic input_tokens/output). Colunas tok_classif_* (roda em toda msg) e tok_gerador_*
+      (gpt-5.1, SOMADO sobre o retry). classif_provedor derivado do formato de usage: resolve
+      com DADO se o classificador esta na OpenAI ou na Anthropic. As rotas de conversa sao
+      STREAM (sem usage aqui, 2b pausada) - o custo Anthropic vem do char-log + dashboard.
+    - FATOR CHICO: coluna origem_modelo (do metadata['model_id'], o wrapper selecionado antes
+      do rewrite para base) separa o gasto do chico-m1 (outro colaborador, usa o chatnd como
+      base) do numero do ChatND.
+    - Log de decomposicao por turno (inteiros) para inspecao pontual. Secao 'Token / Orcamento'
+      no /analytics (so admin) com as ressalvas impressas (stream sem usage; system do wrapper
+      nao medido; chars ~ tokens/4).
+    - Garantias de sempre: best-effort, A|B por AST (a medicao nao toca analytics; o write e
+      no _registrar/finally), STREAM INTOCADO, content-free, migracao idempotente.
   1.54.0:
     - VOZ - ENTRADA (A+B). A pessoa anexa um audio; ele e transcrito (Whisper LOCAL, o
       transcription_handler do OWUI) A MONTANTE do roteamento e vira o PEDIDO. O
@@ -1809,7 +1834,15 @@ def _analytics_write(db_path, ev):
         # VOZ (1.54.0): colunas B idempotentes. Um banco 1a existente ganha as colunas sem
         # migracao manual; se ja existem, o ALTER levanta e e engolido. So o SCHEMA muda -
         # continua content-free (audio = desfecho, audio_faixa = faixa de tamanho).
-        for _col in ("audio TEXT", "audio_faixa TEXT"):
+        # VOZ (1.54.0) + TOKEN 2a (1.55.0): colunas idempotentes. Banco existente ganha as
+        # colunas sem migracao manual; se ja existem, o ALTER levanta e e engolido. So o
+        # SCHEMA muda - continua content-free (inteiros de token/chars, rotulos de rota).
+        for _col in ("audio TEXT", "audio_faixa TEXT",
+                     "chars_sistema INTEGER", "chars_acervo INTEGER",
+                     "chars_anexo INTEGER", "chars_historico INTEGER",
+                     "tok_classif_prompt INTEGER", "tok_classif_compl INTEGER",
+                     "tok_gerador_prompt INTEGER", "tok_gerador_compl INTEGER",
+                     "classif_provedor TEXT", "origem_modelo TEXT"):
             try:
                 con.execute("ALTER TABLE eventos ADD COLUMN " + _col)
             except Exception:
@@ -1818,12 +1851,20 @@ def _analytics_write(db_path, ev):
         con.execute(
             "INSERT INTO eventos (ts, user_hash, rota, classificador, trava, anexo, "
             "anexo_fonte, anexo_faixa, formato_saida, desfecho, recusa_cat, erro_cat, "
-            "latencia_ms, audio, audio_faixa) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "latencia_ms, audio, audio_faixa, chars_sistema, chars_acervo, chars_anexo, "
+            "chars_historico, tok_classif_prompt, tok_classif_compl, tok_gerador_prompt, "
+            "tok_gerador_compl, classif_provedor, origem_modelo) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ts, ev.get("user_hash"), ev.get("rota"), ev.get("classificador"),
              ev.get("trava"), ev.get("anexo"), ev.get("anexo_fonte"),
              ev.get("anexo_faixa"), ev.get("formato_saida"),
              ev.get("desfecho") or "ok", ev.get("recusa_cat"), ev.get("erro_cat"),
-             ev.get("latencia_ms"), ev.get("audio"), ev.get("audio_faixa")),
+             ev.get("latencia_ms"), ev.get("audio"), ev.get("audio_faixa"),
+             ev.get("chars_sistema"), ev.get("chars_acervo"), ev.get("chars_anexo"),
+             ev.get("chars_historico"), ev.get("tok_classif_prompt"),
+             ev.get("tok_classif_compl"), ev.get("tok_gerador_prompt"),
+             ev.get("tok_gerador_compl"), ev.get("classif_provedor"),
+             ev.get("origem_modelo")),
         )
         con.commit()
     finally:
@@ -1943,6 +1984,38 @@ def _analytics_agregar(db_path, dias):
         except sqlite3.OperationalError:
             audio, audio_faixa = {}, {}
 
+        # TOKEN 2a (1.55.0): DEFENSIVO - colunas ausentes num banco pre-1.55 -> token={}.
+        # AVG/SUM ignoram NULL no SQLite, entao a media e sobre as linhas que TEM o dado.
+        try:
+            chars_rota = {}
+            for rota, n, avs, ava, avx, avh in q(
+                "SELECT rota, COUNT(*), AVG(chars_sistema), AVG(chars_acervo), "
+                "AVG(chars_anexo), AVG(chars_historico) FROM eventos WHERE ts>=? "
+                "GROUP BY rota", (corte,)):
+                chars_rota[rota] = {"n": n, "sistema": avs, "acervo": ava,
+                                    "anexo": avx, "historico": avh}
+            cl = q("SELECT COUNT(tok_classif_prompt), AVG(tok_classif_prompt), "
+                   "AVG(tok_classif_compl), SUM(tok_classif_prompt), "
+                   "SUM(tok_classif_compl) FROM eventos WHERE ts>=?", (corte,))[0]
+            ge = q("SELECT COUNT(tok_gerador_prompt), AVG(tok_gerador_prompt), "
+                   "AVG(tok_gerador_compl), SUM(tok_gerador_prompt), "
+                   "SUM(tok_gerador_compl) FROM eventos WHERE ts>=?", (corte,))[0]
+            token = {
+                "chars_rota": chars_rota,
+                "classif": {"n": cl[0], "prompt_avg": cl[1], "compl_avg": cl[2],
+                            "prompt_total": cl[3], "compl_total": cl[4]},
+                "gerador": {"n": ge[0], "prompt_avg": ge[1], "compl_avg": ge[2],
+                            "prompt_total": ge[3], "compl_total": ge[4]},
+                "provedor": dict(q("SELECT classif_provedor, COUNT(*) FROM eventos WHERE "
+                                   "ts>=? AND classif_provedor IS NOT NULL GROUP BY "
+                                   "classif_provedor", (corte,))),
+                "origem": dict(q("SELECT origem_modelo, COUNT(*) FROM eventos WHERE ts>=? "
+                                 "AND origem_modelo IS NOT NULL GROUP BY origem_modelo",
+                                 (corte,))),
+            }
+        except sqlite3.OperationalError:
+            token = {}
+
         estado = "pouco" if total < _LIMIAR_AMOSTRA else "cheio"
         return {
             "estado": estado, "total": total, "dias": dias, "real_total": real_total,
@@ -1951,7 +2024,7 @@ def _analytics_agregar(db_path, dias):
             "div_rec": div_rec, "div_ant": div_ant,
             "recusas": recusas, "erros": erros, "latencia": latencia,
             "anexo_tipo": anexo_tipo, "anexo_fonte": anexo_fonte,
-            "audio": audio, "audio_faixa": audio_faixa,
+            "audio": audio, "audio_faixa": audio_faixa, "token": token,
         }
     finally:
         con.close()
@@ -2034,6 +2107,60 @@ def _analytics_html(agg, dias):
                       "Por faixa: %s</p>" % (
             _h.escape(_an_linha(voz)),
             _h.escape(_an_linha(agg.get("audio_faixa", {})))))
+
+    # TOKEN / ORCAMENTO (2a/1.55.0): so aparece quando ha dados medidos. Mede o INPUT (o
+    # grosso do gasto). Ressalvas impressas - honesto sobre o que NAO cobre.
+    tk = agg.get("token") or {}
+    _chars_rota = tk.get("chars_rota") or {}
+    _cl = tk.get("classif") or {}
+    _ge = tk.get("gerador") or {}
+    _tem_token = bool(_cl.get("n")) or any(
+        (d.get("acervo") is not None or d.get("sistema") is not None
+         or d.get("historico") is not None) for d in _chars_rota.values())
+    if _tem_token:
+        def _milt(x):
+            return ("%d" % round(x)) if x is not None else "-"
+        linhas.append("<h2>Token / Orcamento (2a - so medicao, nada cortado)</h2>")
+        linhas.append("<h3>Composicao media do input por rota (chars)</h3><ul>")
+        for r, d in sorted(_chars_rota.items()):
+            partes = [("sistema", d.get("sistema")), ("acervo", d.get("acervo")),
+                      ("anexo", d.get("anexo")), ("historico", d.get("historico"))]
+            soma = sum(v for _, v in partes if v) or 0
+            if not soma:
+                continue
+            det = " &middot; ".join("%s: %d (%d%%)" % (k, round(v), round(100 * v / soma))
+                                    for k, v in partes if v)
+            linhas.append("<li><b>%s</b> (n=%d): ~%d chars &middot; %s</li>"
+                          % (_h.escape(str(r)), d.get("n") or 0, round(soma), det))
+        linhas.append("</ul>")
+        linhas.append("<h3>Token nao-stream (usage medido)</h3><ul>")
+        linhas.append("<li>Classificador (toda msg): n=%s &middot; media prompt/compl = "
+                      "%s/%s &middot; total = %s/%s &middot; provedor: %s</li>" % (
+                          _cl.get("n") or 0, _milt(_cl.get("prompt_avg")),
+                          _milt(_cl.get("compl_avg")), _milt(_cl.get("prompt_total")),
+                          _milt(_cl.get("compl_total")),
+                          _h.escape(_an_linha(tk.get("provedor", {})))))
+        linhas.append("<li>Gerador (gpt-5.1, rota arquivo): n=%s &middot; media prompt/"
+                      "compl = %s/%s &middot; total = %s/%s</li>" % (
+                          _ge.get("n") or 0, _milt(_ge.get("prompt_avg")),
+                          _milt(_ge.get("compl_avg")), _milt(_ge.get("prompt_total")),
+                          _milt(_ge.get("compl_total"))))
+        linhas.append("</ul>")
+        _pp = (_cl.get("prompt_total") or 0) + (_ge.get("prompt_total") or 0)
+        _cc = (_cl.get("compl_total") or 0) + (_ge.get("compl_total") or 0)
+        if _pp + _cc:
+            linhas.append("<p>Prompt vs Completion (medido, nao-stream): MANDAR <b>%d%%</b> "
+                          "&middot; RECEBER <b>%d%%</b>.</p>"
+                          % (round(100 * _pp / (_pp + _cc)),
+                             round(100 * _cc / (_pp + _cc))))
+        linhas.append("<p>Por origem (separa o Chico): %s</p>"
+                      % _h.escape(_an_linha(tk.get("origem", {}))))
+        linhas.append(
+            "<p><i>Ressalvas: (1) geral/documentos sao STREAM - o usage delas NAO entra "
+            "aqui (2b pausada); o custo Anthropic se le no dashboard cruzado com o acervo "
+            "acima. (2) o system prompt do BASE-MODEL (persona dos wrappers) e aplicado "
+            "pelo OWUI depois do pipe, invisivel - leia no Admin -> Models. (3) chars ~ "
+            "tokens/4 (estimativa).</i></p>")
 
     return "\n".join(x for x in linhas if x)
 
@@ -2447,6 +2574,70 @@ def _extrair_conteudo(res):
         return data["choices"][0]["message"]["content"] or ""
     except Exception:
         return ""
+
+
+def _extrair_usage(res):
+    # USAGE das chamadas NAO-STREAM (o irmao de _extrair_conteudo, 2a/1.55.0). O 'usage'
+    # ja vem de graca no JSON da resposta e hoje e descartado. DEFENSIVO aos dois
+    # provedores: OpenAI usa prompt_tokens/completion_tokens; Anthropic usa
+    # input_tokens/output_tokens (nomes diferentes). Retorna (prompt, compl, provedor) -
+    # provedor e 'openai'|'anthropic', DERIVADO de qual formato veio (resolve com DADO o
+    # provedor do classificador). (None, None, None) se nao houver usage. Content-free
+    # (so inteiros). Nunca levanta.
+    data = None
+    if isinstance(res, dict):
+        data = res
+    else:
+        corpo = getattr(res, "body", None)
+        if corpo:
+            try:
+                data = json.loads(corpo)
+            except Exception:
+                data = None
+    if not isinstance(data, dict):
+        return None, None, None
+    u = data.get("usage")
+    if not isinstance(u, dict):
+        return None, None, None
+    p, c = u.get("prompt_tokens"), u.get("completion_tokens")
+    if p is not None or c is not None:
+        return p, c, "openai"
+    p, c = u.get("input_tokens"), u.get("output_tokens")
+    if p is not None or c is not None:
+        return p, c, "anthropic"
+    return None, None, None
+
+
+def _len_conteudo(cont):
+    # Chars de um 'content' de mensagem, seja string ou lista de partes (text/image).
+    # So conta o TEXTO - content-free (mede tamanho, nao guarda teor).
+    if isinstance(cont, str):
+        return len(cont)
+    if isinstance(cont, list):
+        n = 0
+        for p in cont:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                n += len(p["text"])
+        return n
+    return 0
+
+
+def _chars_historico(messages):
+    # Chars das mensagens ANTERIORES - o que a conversa REENVIA a cada turno (o custo de
+    # conversa longa que o dono quer medir). Exclui a ULTIMA do usuario (o pedido atual).
+    # Content-free: so o total em chars.
+    msgs = messages if isinstance(messages, list) else []
+    ult = -1
+    for i in range(len(msgs) - 1, -1, -1):
+        if isinstance(msgs[i], dict) and msgs[i].get("role") == "user":
+            ult = i
+            break
+    total = 0
+    for i, m in enumerate(msgs):
+        if i == ult or not isinstance(m, dict):
+            continue
+        total += _len_conteudo(m.get("content"))
+    return total
 
 
 def _extrair_objeto_balanceado(s):
@@ -2974,7 +3165,7 @@ class Pipe:
         self._tool_cache = None
         self._tool_lock = asyncio.Lock()
 
-    async def _classificar(self, request, user, messages, nota_anexo=""):
+    async def _classificar(self, request, user, messages, nota_anexo="", _ev=None):
         transcript = _transcript(messages, 6)[:4000]
         # FIX A (1.50.0): o TIPO do anexo entra no julgamento. Ver _nota_anexo.
         if nota_anexo:
@@ -3004,6 +3195,13 @@ class Pipe:
             "stream": False,
         }
         res = await generate_chat_completion(request, payload, user, bypass_filter=True)
+        # 2a (1.55.0): usage do classificador (roda em TODA msg). classif_provedor
+        # DERIVADO do formato de usage - resolve com dado se esta na OpenAI ou Anthropic.
+        if _ev is not None:
+            p, c, prov = _extrair_usage(res)
+            _ev["tok_classif_prompt"] = p
+            _ev["tok_classif_compl"] = c
+            _ev["classif_provedor"] = prov
         return _extrair_conteudo(res).strip().lower()
 
     def _bases(self):
@@ -3534,6 +3732,20 @@ class Pipe:
         # jamais degrada a resposta do usuario. A escrita roda em THREAD (o event loop
         # segue livre). Fecha a latencia aqui, no fim do turno.
         try:
+            # 2a (1.55.0): log de DECOMPOSICAO por turno, ANTES do gate da valve (serve
+            # para inspecao pontual mesmo com analytics off). So inteiros/rotulos -
+            # content-free. A medicao ja esta no ev; aqui so imprime.
+            if ev:
+                log.info(
+                    "chatnd: orcamento[%s/%s] chars sistema=%s acervo=%s anexo=%s "
+                    "historico=%s | tok classif=%s/%s gerador=%s/%s prov=%s",
+                    ev.get("rota"), ev.get("origem_modelo"),
+                    ev.get("chars_sistema"), ev.get("chars_acervo"),
+                    ev.get("chars_anexo"), ev.get("chars_historico"),
+                    ev.get("tok_classif_prompt"), ev.get("tok_classif_compl"),
+                    ev.get("tok_gerador_prompt"), ev.get("tok_gerador_compl"),
+                    ev.get("classif_provedor"),
+                )
             if not getattr(self.valves, "ANALYTICS_ON", True):
                 return
             if not ev:
@@ -3745,13 +3957,21 @@ class Pipe:
                     )
         return self._tool_cache
 
-    async def _chamar_gerador(self, request, user, messages, sistema):
+    async def _chamar_gerador(self, request, user, messages, sistema, _ev=None):
         payload = {
             "model": self.valves.GERADOR_MODEL,
             "messages": [{"role": "system", "content": sistema}] + messages,
             "stream": False,
         }
         res = await generate_chat_completion(request, payload, user, bypass_filter=True)
+        # 2a (1.55.0): usage do gerador (gpt-5.1, o caro). SOMA sobre as ate 2 chamadas
+        # (a original + o retro) - senao o mapa subestima o gpt-5.1.
+        if _ev is not None:
+            p, c, _ = _extrair_usage(res)
+            if p is not None:
+                _ev["tok_gerador_prompt"] = (_ev.get("tok_gerador_prompt") or 0) + p
+            if c is not None:
+                _ev["tok_gerador_compl"] = (_ev.get("tok_gerador_compl") or 0) + c
         return _parse_json(_extrair_conteudo(res))
 
     @staticmethod
@@ -3796,7 +4016,7 @@ class Pipe:
         return ""
 
     async def _gerar_arquivo(self, request, user, messages, __user__, imagens=None,
-                             original="", formato_codigo=""):
+                             original="", formato_codigo="", _ev=None):
         # imagens = anexos do usuario (data-URLs), extraidos pelo pipe na rota de
         # arquivo. Os BYTES nunca entram no prompt: o GERADOR recebe so os marcadores
         # (IMAGEM_1...) e devolve onde cada um entra; os bytes vao por parametro para
@@ -3806,6 +4026,11 @@ class Pipe:
         if imagens:
             messages = _msgs_sem_imagem(messages)
             sistema = GERADOR + _nota_imagens(len(imagens))
+        # 2a (1.55.0): mede o system do gerador ANTES de anexar o <original>, e o anexo
+        # separado - disjuntos, para o mapa nao dobrar contagem. Content-free (chars).
+        if _ev is not None:
+            _ev["chars_sistema"] = len(sistema)
+            _ev["chars_anexo"] = len(original or "")
         # ORIGINAL A PRESERVAR: vai no SISTEMA, nao na mensagem do usuario. Assim o
         # material fica separado do PEDIDO (o gerador nao confunde dado com instrucao) e
         # a regra de preservacao chega junto do bloco a que se refere.
@@ -3815,7 +4040,7 @@ class Pipe:
                        + "\n<codigo_original>\n" + original + "\n</codigo_original>\n")
         elif original:
             sistema = sistema + _INSTRUCAO_PRESERVAR + "\n<original>\n" + original + "\n</original>\n"
-        dados = await self._chamar_gerador(request, user, messages, sistema)
+        dados = await self._chamar_gerador(request, user, messages, sistema, _ev)
         # Rede de seguranca: se o JSON falhou OU veio sem conteudo (ex.: slides
         # vazio por estouro de tamanho), tenta UMA vez com instrucao estrita.
         if not self._dados_uteis(dados):
@@ -3829,7 +4054,7 @@ class Pipe:
                 "sem cercas. Se o conteudo for extenso, foque no tema principal "
                 "e seja conciso, mas NUNCA devolva vazio."
             )
-            dados = await self._chamar_gerador(request, user, messages, reforco)
+            dados = await self._chamar_gerador(request, user, messages, reforco, _ev)
         if not self._dados_uteis(dados):
             log.error("chatnd: gerador falhou nas duas tentativas")
             return (
@@ -4057,6 +4282,12 @@ class Pipe:
         )
         _files = __files__ if isinstance(__files__, list) else (_meta.get("files") or [])
 
+        # 2a (1.55.0): ORIGEM (separa o Chico) e HISTORICO (o que a conversa reenvia).
+        # model_id e o wrapper SELECIONADO (ex.: chico-m1), preservado no metadata ANTES
+        # de o OWUI trocar body['model'] pelo base (functions.py:269). Content-free.
+        _ev["origem_modelo"] = (str(_meta.get("model_id") or "")[:40] or None)
+        _ev["chars_historico"] = _chars_historico(body.get("messages"))
+
         # ---------------------------------------------------------------------
         # TAREFA INTERNA -> sai ANTES do roteador e do RAG (1.32.0).
         #
@@ -4189,7 +4420,7 @@ class Pipe:
                     _tem_img_cls, [a["nome"] for a in _anexos_recentes(_files)]
                 )
                 saida = await self._classificar(
-                    __request__, user, _msgs_rota, _nota
+                    __request__, user, _msgs_rota, _nota, _ev
                 )
                 for chave in ["imagem", "arquivo", "documentos", "geral"]:
                     if chave in saida:
@@ -4516,6 +4747,7 @@ class Pipe:
                             contexto = contexto[:teto_ac]
                     if contexto:
                         msgs = self._injetar_contexto_arquivo(msgs, contexto)
+                    _ev["chars_acervo"] = len(contexto or "")   # 2a: acervo na rota arquivo
                 elif anexos:
                     log.info(
                         "chatnd: acervo PULADO (anexo e a fonte; pedido nao cita o canon)"
@@ -4537,7 +4769,7 @@ class Pipe:
                     )
                 saida_arq = await self._gerar_arquivo(
                     __request__, user, msgs, __user__, imagens_anexo, original,
-                    formato_codigo,
+                    formato_codigo, _ev,
                 )
                 return (saida_arq or "") + aviso_ilegiveis
             except Exception as e:
@@ -4564,6 +4796,7 @@ class Pipe:
                 log.warning(
                     "chatnd: rota documentos sem contexto injetado (RAG vazio)"
                 )
+            _ev["chars_acervo"] = len(contexto or "")   # 2a: acervo da rota documentos
 
         # Rota GERAL: busca na WEB e injeta os trechos (1.36.0 / fatia 3).
         # Simetrica a 'documentos', trocando a base pela internet: 'documentos' tem base
@@ -4587,6 +4820,7 @@ class Pipe:
                 body["messages"] = self._injetar_sistema(
                     body.get("messages") or [], contexto_web
                 )
+            _ev["chars_acervo"] = len(contexto_web or "")   # 2a: 'acervo' web da rota geral
 
         # Injeta a voz/estrutura da triade (documentos e raciocinio) quando
         # aplicavel - como system message, sem alterar o conteudo do usuario.
@@ -4594,6 +4828,7 @@ class Pipe:
             body["messages"] = self._injetar_sistema(
                 body.get("messages") or [], VOZ_TRIADE
             )
+            _ev["chars_sistema"] = len(VOZ_TRIADE)   # 2a: system do pipe nas rotas de conversa
 
         body["model"] = rota.get(categoria, self.valves.MODELO_GERAL)
         try:
