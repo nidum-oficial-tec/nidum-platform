@@ -1,9 +1,97 @@
 """
 title: ChatND
 author: Nidum
-version: 1.55.0
+version: 1.60.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.60.0:
+    - SAIDA DE VOZ robusta (o player nao aparecia porque o SAVE demorava ~62s e o cliente
+      ja fechava o stream). Tres pecas: (1) KEEPALIVE - durante sintese+save, emite um chunk
+      SSE de conteudo VAZIO a cada TTS_KEEPALIVE_SEG (2s), entao a conexao nao cai no ocioso
+      e o player aparece ASSIM QUE o save termina, por mais lento que ele seja. (2) CAPTURA
+      DE CANCELAMENTO - se o cliente fecha durante a sintese, o caminho de audio agora pega
+      GeneratorExit/CancelledError (BaseException, que 'except Exception' NAO pega), LOGA e
+      cancela a task; nunca mais morre MUDO. (3) SEM cap de tamanho - removido TTS_MAX_CHARS;
+      o usuario SEMPRE recebe o audio, mesmo de resposta longa (o peso vai para o keepalive).
+    - RETENCAO real (a v1 nunca apagou nada - so gravava a politica no meta). Apos emitir,
+      _prune_audios roda em BACKGROUND e best-effort: apaga os audios chatnd_tts DO USUARIO
+      mais velhos que TTS_RETER_DIAS - arquivo (R2+local via Storage.delete_file) E registro
+      (Files.delete_file_by_id). TTS_RETER_DIAS<=0 desliga a limpeza. Nao segura o stream.
+    - A LENTIDAO do save (~62s) e do caminho de upload S3 do OWUI, NAO do R2 (o backup sobe
+      31MB/~45s no mesmo bucket) - conserto de velocidade e de INFRA (env S3 do servico), nao
+      do pipe. Este 1.60.0 faz o audio FUNCIONAR de forma confiavel na velocidade atual.
+    - VALVES: sai TTS_MAX_CHARS; entra TTS_KEEPALIVE_SEG (default 2.0; 0 desliga o keepalive).
+      TTS_TIMEOUT sobe p/ 60 (sintese+save de resposta longa cabem). O resto igual.
+    - TESTE DE ACEITE (teste_voz_saida.py): +caminho de CANCELAMENTO (fecha o stream no meio
+      da sintese -> loga cancelado, cancela a task, nao emite player nem [DONE], NAO levanta
+      para fora silenciosamente) e +keepalive (chunks vazios saem enquanto o save nao volta,
+      e o player sai LOGO que o save termina). Mantem os casos de roteamento do 1.59.0.
+  1.59.0:
+    - CONSERTO da saida de voz (a causa raiz achada no log): "o que e X? me responde em
+      audio" caia na rota ARQUIVO - o CLASSIFICADOR rodava ANTES da deteccao de audio e lia
+      "me responde em audio" como "produza um audio/documento", roteando p/ arquivo; a rota
+      de arquivo gera o HTML e RETORNA, e a deteccao (la embaixo) nunca rodava. A ordem
+      1.57/1.58 (deteccao antes da busca) nao pegava, porque arquivo retorna antes.
+    - A deteccao + remocao do gatilho agora roda ANTES DO CLASSIFICADOR: o roteador e as
+      travas veem a PERGUNTA LIMPA ("o que e uma holding?") -> conversa (geral/documentos)
+      -> o audio segue. O gatilho de audio nao e sinal de rota.
+    - TESTE DE ACEITE (garante que a limpeza NAO mexe em quem nao pede audio): (1) "gera um
+      pdf sobre holding" -> audio nao dispara, segue ARQUIVO; (2) "o que e uma holding?" ->
+      audio nao dispara, nao vira arquivo; (3) "o que e uma holding? me responde em audio"
+      -> dispara, limpa p/ a pergunta, e a pergunta limpa NAO vira arquivo. + estrutural:
+      a deteccao esta antes do _classificar no fonte.
+  1.58.0:
+    - DIAGNOSTICO da saida de voz (debug do porque o audio nao vinha): o caminho da sintese
+      era MUDO em varios pontos (guard do _sintetizar_openai sem log, sucesso sem log). Agora
+      CADA passo loga: _resposta_ou_aviso (resposta streama? hook ligado?), _stream_resiliente
+      (inicio da sintese pos-[DONE]), _emitir_audio_final (chars do texto/limpo, ramo tomado),
+      _sintetizar_openai (guard TTS_ON/KEY, chamada model+chars, status/corpo do erro, OK+bytes),
+      _salvar_audio (salvo/None). Nenhum caminho fica sem rastro. Logs content-free (sem teor,
+      sem a chave).
+    - CONSERTO do gatilho vazando para a busca: a deteccao/limpeza de audio agora roda ANTES
+      do RAG/web (nao depois), entao a query da busca e do modelo usa o texto SEM o gatilho -
+      antes, "responda em audio por favor" ia cru para a Tavily e o modelo comentava o audio.
+  1.57.0:
+    - SAIDA DE VOZ: motor trocado de Azure AI Speech para OpenAI TTS (voz 'echo'). Usa a
+      chave OpenAI que JA EXISTE (sem provedor novo, sem entrar no rol de sub-processadores
+      da Azure - simplifica LGPD). POST /v1/audio/speech {model=tts-1, voice=echo, input,
+      response_format=mp3}, Bearer. Troca LOCALIZADA, nao estrutural: so o metodo de sintese
+      (_sintetizar_azure -> _sintetizar_openai) + as valves; _stream_resiliente, deteccao,
+      best-effort, teste de aceite e formato do player IDENTICOS.
+    - SEM SSML: o texto vai PLAIN no campo 'input' (o aiohttp json= escapa). O helper _ssml
+      foi REMOVIDO. A limpeza de markdown (_limpar_para_fala) fica IGUAL - a voz continua
+      nao lendo sintaxe; so o wrapper SSML/escape-XML saiu (era exclusivo do Azure).
+    - VALVES: saem TTS_REGIAO, TTS_FORMATO, TTS_VELOCIDADE (Azure); entram TTS_BASE_URL
+      (default api.openai.com/v1), TTS_MODEL (tts-1; ou tts-1-hd), TTS_SPEED (0.25-4.0).
+      TTS_VOZ default 'echo'. TTS_KEY = a chave OpenAI. TTS_ON default OFF. O resto igual.
+  1.56.0:
+    - SAIDA DE VOZ no chat (TTS). Quando o usuario PEDE audio em linguagem natural ("me
+      responde em audio", "pode falar isso"), a resposta traz o texto normal + um PLAYER
+      reproduzivel no chat + link de download do mp3. O texto NUNCA e alterado/omitido.
+    - PRIORIDADE MAXIMA (por CONSTRUCAO, provado por teste): falha/lentidao/indisponibilidade
+      do TTS nunca quebra/atrasa/trunca o texto. A sintese roda 100% A JUSANTE do texto ja
+      streamado, dentro do _stream_resiliente: cada chunk de texto passa intacto; no [DONE],
+      SE audio foi pedido, sintetiza e emite o audio ANTES do fim; se falha/off, sai um aviso
+      discreto e o texto ja foi. teste_voz_saida.py com TTS morto prova texto integro + fim
+      no tempo normal + aviso no lugar do audio.
+    - DETECCAO deterministica por PROXIMIDADE + POSICAO (nao co-ocorrencia solta): verbo de
+      pedido PERTO de termo de audio, OU verbo de fala perto de demonstrativo (sem 'sobre/de'
+      no meio); em mensagem longa, o par tem de estar numa PONTA (pedido de formato quase
+      sempre abre/fecha a mensagem; termo enterrado no meio e assunto). Tudo calibravel por
+      valve (TTS_VERBOS, TTS_TERMOS_AUDIO, TTS_VERBOS_FALA, TTS_DEIXIS, TTS_JANELA,
+      TTS_DIST_PONTA, TTS_MAX_PALAVRAS). O classificador NAO dispara audio sozinho na v1
+      (evita audio-surpresa/gasto Azure atoa; extensao fica p/ v2 com dado real). O span do
+      pedido e REMOVIDO da mensagem antes do modelo (nao comenta o audio).
+    - RENDER provado no 0.9.6: <div><audio>{url}</audio></div> como conteudo (URL no CONTEUDO
+      da tag, embrulhada em <div> p/ virar bloco - HTMLToken.svelte). Persiste no reload (e
+      conteudo da mensagem, nao decoracao de outlet). Download por /api/v1/files/{id}/content.
+    - TTS: Azure AI Speech (Cognitive Services Speech, SSML), voz pt-BR-ThalitaNeural, regiao
+      brazilsouth (dado no pais/LGPD). Tudo por VALVE, nada hardcoded: TTS_ON (default OFF),
+      TTS_REGIAO, TTS_KEY, TTS_VOZ, TTS_FORMATO, TTS_VELOCIDADE, TTS_MAX_CHARS (recusa acima,
+      aviso humano - nao fatia), TTS_TIMEOUT, TTS_GATILHOS, TTS_RETER_DIAS (politica de
+      retencao registrada; meta tagueia chatnd_tts + reter_dias). Markdown limpo antes de
+      falar (codigo/tabela/link/header/enfase/etiqueta) + escape XML no SSML. So o texto sai,
+      so para a Azure.
   1.55.0:
     - AUDITORIA DE TOKEN - Fatia 2a (MEDIR, sem cortar). Instrumenta o consumo para achar
       o ponto otimo (gasto compativel com a qualidade) - cortar acervo as cegas reintroduz
@@ -1511,6 +1599,156 @@ def _tem_conteudo_sse(texto):
         except Exception:
             return True
     return False
+
+
+def _texto_de_sse(texto):
+    # Extrai e CONCATENA o conteudo (delta/message) dos chunks SSE 'data:' de um blob.
+    # Irmao de _tem_conteudo_sse - usado para ACUMULAR o texto da resposta (saida de voz).
+    partes = []
+    for linha in (texto or "").split("\n"):
+        linha = linha.strip()
+        if not linha.startswith("data:"):
+            continue
+        payload = linha[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            d = json.loads(payload)
+            ch = (d.get("choices") or [{}])[0]
+            c = (ch.get("delta") or {}).get("content")
+            if not c:
+                c = (ch.get("message") or {}).get("content")
+            if isinstance(c, str) and c:
+                partes.append(c)
+        except Exception:
+            continue
+    return "".join(partes)
+
+
+# ----------------------------------------------------- SAIDA DE VOZ (TTS no chat, 1.56.0)
+# Deteccao DETERMINISTICA do pedido de audio (piso confiavel). O classificador NAO dispara
+# audio sozinho na v1: evita audio-surpresa e gasto Azure a toa. Extensao pelo
+# classificador fica para v2, com dados de uso real.
+_RE_FALA_CODIGO = re.compile(r"```[\s\S]*?```|`[^`]*`")
+_RE_FALA_IMG = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_RE_FALA_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_RE_FALA_HTML = re.compile(r"<[^>]+>")
+_RE_FALA_TABELA = re.compile(r"^\s*\|.*\|\s*$", re.M)
+_RE_FALA_ETIQUETA = re.compile(
+    r"^\s*\[(?:Fonte|Acervos|Fonte \+ Acervos|Fora do acervo|Convergencia|"
+    r"Em aberto)[^\]]*\]\s*", re.M)
+_RE_FALA_MARCA = re.compile(r"[#*_~]+")
+
+
+def _norm_palavra(p):
+    # Normaliza uma palavra para comparar: sem acento, minuscula, sem pontuacao colada.
+    return _normalizar_ascii(str(p)).strip(".,;:!?()[]{}\"'`-")
+
+
+# 'sobre/de' entre o verbo de fala e o demonstrativo = ASSUNTO, nao pedido de voz:
+# "falar isso" (pedido) x "falar sobre isso" (tema). Separa os dois.
+_STOP_FALA = frozenset(("sobre", "de", "do", "da", "dos", "das", "acerca", "respeito"))
+# 'cola' comum a engolir na remocao do gatilho (para o modelo nao comentar o audio).
+_COLA_ANTES = frozenset(("me", "pode", "podes", "poderia", "consegue", "opa", "e", "por",
+                         "favor", "voce", "ai"))
+_COLA_DEPOIS = frozenset(("por", "favor", "ai", "pra", "mim", "sim", "entao"))
+
+
+def _cfg_audio(valves):
+    # Config da deteccao a partir das VALVES (tudo calibravel). Listas separadas por ';'.
+    def _lista(nome):
+        return frozenset(_norm_palavra(x)
+                         for x in str(getattr(valves, nome, "") or "").split(";")
+                         if x.strip())
+
+    def _int(nome, d):
+        try:
+            return int(getattr(valves, nome, d) or d)
+        except Exception:
+            return d
+    return {
+        "verbos": _lista("TTS_VERBOS"), "audios": _lista("TTS_TERMOS_AUDIO"),
+        "falas": _lista("TTS_VERBOS_FALA"), "deixis": _lista("TTS_DEIXIS"),
+        "janela": _int("TTS_JANELA", 4), "dist_ponta": _int("TTS_DIST_PONTA", 6),
+        "max_palavras": _int("TTS_MAX_PALAVRAS", 30),
+    }
+
+
+def _audio_span(texto, cfg):
+    # DETERMINISTICA por PROXIMIDADE + POSICAO. Retorna (i0,i1) indices de palavra do
+    # match, ou None. NAO basta co-ocorrer: os termos tem de estar PERTO (janela) e, em
+    # mensagem longa, numa PONTA (inicio/fim) - pedido de formato quase sempre vem na
+    # ponta; termo enterrado no meio e assunto. Duas formas de match:
+    #   (1) verbo de pedido/envio PERTO de termo de audio ("me responde em audio");
+    #   (2) verbo de fala PERTO de um demonstrativo, SEM 'sobre/de' no meio ("pode falar
+    #       isso" sim; "vamos falar sobre isso" nao).
+    toks = [_norm_palavra(t) for t in (texto or "").split()]
+    n = len(toks)
+    if not n:
+        return None
+    jan = cfg["janela"]
+    pv = [i for i, w in enumerate(toks) if w in cfg["verbos"]]
+    pa = [i for i, w in enumerate(toks) if w in cfg["audios"]]
+    pf = [i for i, w in enumerate(toks) if w in cfg["falas"]]
+    pd = [i for i, w in enumerate(toks) if w in cfg["deixis"]]
+    cands = []
+    for i in pv:
+        for j in pa:
+            if abs(i - j) <= jan:
+                cands.append((min(i, j), max(i, j)))
+    for i in pf:
+        for j in pd:
+            if 0 < j - i <= jan and not any(toks[k] in _STOP_FALA
+                                            for k in range(i + 1, j)):
+                cands.append((i, j))
+    if not cands:
+        return None
+    if n > cfg["max_palavras"]:
+        dp = cfg["dist_ponta"]
+        cands = [(a, b) for (a, b) in cands if a <= dp or b >= n - 1 - dp]
+        if not cands:
+            return None
+    return min(cands, key=lambda ab: ab[1] - ab[0])   # o span mais coeso
+
+
+def _pede_audio(texto, cfg):
+    # True se ha PEDIDO explicito de audio (proximidade + posicao). Figura de linguagem
+    # ("queria te ouvir falando sobre isso") e co-ocorrencia solta no meio NAO disparam.
+    return _audio_span(texto, cfg) is not None
+
+
+def _sem_gatilho_audio(texto, cfg):
+    # Remove o SPAN do pedido (para o modelo nao COMENTAR o audio), engolindo 'cola' comum
+    # antes/depois (me/pode/por favor). Best-effort: se esvaziar, mantem o original (nunca
+    # manda pedido vazio ao modelo).
+    span = _audio_span(texto, cfg)
+    if not span:
+        return texto
+    toks = (texto or "").split()
+    i0, i1 = span
+    while i0 - 1 >= 0 and _norm_palavra(toks[i0 - 1]) in _COLA_ANTES:
+        i0 -= 1
+    while i1 + 1 < len(toks) and _norm_palavra(toks[i1 + 1]) in _COLA_DEPOIS:
+        i1 += 1
+    resto = " ".join(toks[:i0] + toks[i1 + 1:]).strip(" ,.;:-\n\t")
+    return resto or texto
+
+
+def _limpar_para_fala(texto):
+    # Tira a SINTAXE que a voz nao le: codigo, imagens, links (mantem o texto), tabelas,
+    # HTML (o <div><audio> tambem), etiqueta de origem, e marcas de markdown (#, *, _, ~).
+    # NAO toca hifen (bem-vindo continua inteiro).
+    t = texto or ""
+    t = _RE_FALA_CODIGO.sub(" ", t)
+    t = _RE_FALA_IMG.sub(" ", t)
+    t = _RE_FALA_LINK.sub(r"\1", t)
+    t = _RE_FALA_HTML.sub(" ", t)
+    t = _RE_FALA_TABELA.sub(" ", t)
+    t = _RE_FALA_ETIQUETA.sub("", t)
+    t = _RE_FALA_MARCA.sub("", t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{2,}", "\n", t)
+    return t.strip()
 
 
 def _texto_de_msg(m):
@@ -3092,6 +3330,33 @@ class Pipe:
         #   so quando o dono configurar o salt, de proposito. Privacidade por padrao.
         ANALYTICS_ON: bool = Field(default=True)
         ANALYTICS_USER_SALT: str = Field(default="")
+        # SAIDA DE VOZ (TTS no chat, 1.56.0). Tudo por valve, nada hardcoded. Default OFF.
+        # PRIORIDADE MAXIMA: falha/lentidao/indisponibilidade do TTS NUNCA quebra, atrasa
+        # ou trunca o texto - a sintese e 100% a jusante do texto ja streamado.
+        TTS_ON: bool = Field(default=False)
+        TTS_BASE_URL: str = Field(default="https://api.openai.com/v1")
+        TTS_KEY: str = Field(default="")          # a chave OpenAI que ja existe (sem provedor novo)
+        TTS_MODEL: str = Field(default="tts-1")   # ou tts-1-hd (qualidade melhor, ~2x custo)
+        TTS_VOZ: str = Field(default="echo")
+        TTS_SPEED: float = Field(default=1.0)     # 0.25 a 4.0
+        # SEM cap de tamanho (1.60.0): o usuario SEMPRE recebe o audio, mesmo de resposta
+        # longa. O peso vai para o keepalive (mantem a conexao viva durante sintese+save).
+        TTS_TIMEOUT: int = Field(default=60)             # seg; limita a chamada HTTP da sintese
+        TTS_KEEPALIVE_SEG: float = Field(default=2.0)    # intervalo do keepalive (0 = desliga)
+        # DETECCAO por PROXIMIDADE + POSICAO (nao co-ocorrencia solta). Tudo calibravel:
+        # verbo de pedido/envio PERTO de termo de audio, OU verbo de fala PERTO de um
+        # demonstrativo; em mensagem longa, o par tem de estar numa PONTA. Ver _audio_span.
+        TTS_VERBOS: str = Field(
+            default="responde;responda;responder;manda;mande;mandar;envia;envie;"
+                    "enviar;quero;queria;passa;passe")
+        TTS_TERMOS_AUDIO: str = Field(default="audio;audios;voz")
+        TTS_VERBOS_FALA: str = Field(default="fala;falar;narra;narrar;le;leia;ler")
+        TTS_DEIXIS: str = Field(
+            default="isso;isto;aquilo;resposta;texto;esse;essa;este;esta;tudo")
+        TTS_JANELA: int = Field(default=4)          # proximidade em PALAVRAS
+        TTS_DIST_PONTA: int = Field(default=6)      # dist. da ponta (msg longa), palavras
+        TTS_MAX_PALAVRAS: int = Field(default=30)   # acima -> exige pedido numa PONTA
+        TTS_RETER_DIAS: int = Field(default=30)          # politica de retencao (LGPD)
         MOSTRAR_ROTA: bool = Field(default=False)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
@@ -3522,12 +3787,241 @@ class Pipe:
             )
         return contexto
 
-    async def _stream_resiliente(self, body_iterator):
+    async def _sintetizar_openai(self, texto):
+        # TTS OpenAI (/v1/audio/speech): POST JSON {model, voice, input, response_format},
+        # header Bearer TTS_KEY (a chave OpenAI que JA EXISTE - sem provedor novo). Devolve
+        # os BYTES do mp3 ou None em QUALQUER falha (best-effort, NUNCA levanta). Timeout
+        # curto (so a sintese espera; o texto ja streamou). So o texto sai, so para a OpenAI.
+        # SEM SSML: o texto vai PLAIN no campo 'input' - o aiohttp (json=) faz o escape.
+        v = self.valves
+        if not getattr(v, "TTS_ON", False) or not v.TTS_KEY:
+            log.info("chatnd: TTS pulado no guard (TTS_ON=%s, TTS_KEY=%s)",
+                     bool(getattr(v, "TTS_ON", False)),
+                     "preenchida" if v.TTS_KEY else "VAZIA")
+            return None
+        url = str(v.TTS_BASE_URL or "https://api.openai.com/v1").rstrip("/") + "/audio/speech"
+        payload = {
+            "model": str(v.TTS_MODEL or "tts-1"),
+            "voice": str(v.TTS_VOZ or "echo"),
+            "input": texto or "",
+            "response_format": "mp3",
+        }
+        try:
+            payload["speed"] = float(v.TTS_SPEED or 1.0)
+        except Exception:
+            pass
+        headers = {
+            "Authorization": "Bearer " + str(v.TTS_KEY),
+            "Content-Type": "application/json",
+        }
+        try:
+            import aiohttp
+            log.info("chatnd: chamando OpenAI TTS (model=%s, %d chars)",
+                     payload["model"], len(str(payload["input"])))
+            to = aiohttp.ClientTimeout(total=float(v.TTS_TIMEOUT or 20))
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post(url, json=payload, headers=headers, timeout=to) as resp:
+                    if resp.status != 200:
+                        _corpo = (await resp.text())[:200]
+                        log.warning("chatnd: TTS OpenAI devolveu status %s: %s",
+                                    resp.status, _corpo)
+                        return None
+                    dados = await resp.read()
+                    log.info("chatnd: TTS OpenAI OK (%d bytes)", len(dados or b""))
+                    return dados
+        except Exception:
+            log.exception("chatnd: TTS OpenAI falhou (audio nao vem; o texto ja foi)")
+            return None
+
+    async def _salvar_audio(self, data_bytes, user_id):
+        # Salva o mp3 pelos modulos internos (mesmo padrao triplo-fallback da tool gerador)
+        # e devolve a URL nativa /api/v1/files/{id}/content. Best-effort: None em falha. O
+        # meta carrega chatnd_tts + reter_dias (politica de retencao registrada na v1).
+        try:
+            import io as _io
+            import inspect as _inspect
+            import uuid as _uuid
+            from open_webui.storage.provider import Storage
+            from open_webui.models.files import Files, FileForm
+
+            fid = str(_uuid.uuid4())
+            stored = fid + "_chatnd_audio.mp3"
+
+            def _up():
+                ultimo = None
+                for tentar in (
+                    lambda: Storage.upload_file(_io.BytesIO(data_bytes), stored, {}),
+                    lambda: Storage.upload_file(data_bytes, stored, {}),
+                    lambda: Storage.upload_file(data_bytes, stored),
+                ):
+                    try:
+                        return tentar()
+                    except Exception as e:
+                        ultimo = e
+                raise RuntimeError(str(ultimo))
+
+            result = await asyncio.to_thread(_up)
+            path = result[1] if isinstance(result, tuple) and len(result) >= 2 else result
+            if not path:
+                return None
+            meta = {"name": "chatnd_audio.mp3", "content_type": "audio/mpeg",
+                    "size": len(data_bytes), "chatnd_tts": True,
+                    "reter_dias": int(getattr(self.valves, "TTS_RETER_DIAS", 30) or 30)}
+            form = FileForm(id=fid, filename="chatnd_audio.mp3", path=path,
+                            meta=meta, data={})
+            inserted = Files.insert_new_file(user_id, form)
+            if _inspect.isawaitable(inserted):
+                inserted = await inserted
+            if inserted is None:
+                log.warning("chatnd: audio - insert_new_file devolveu None")
+                return None
+            log.info("chatnd: audio salvo (%d bytes) -> /api/v1/files/%s/content",
+                     len(data_bytes), fid)
+            return "/api/v1/files/" + fid + "/content"
+        except Exception:
+            log.exception("chatnd: falha ao salvar o audio (o texto ja foi)")
+            return None
+
+    @staticmethod
+    def _sse_conteudo(texto):
+        # Um chunk SSE 'data:' de conteudo (delta.content), no formato que o OWUI ja
+        # streama - para injetar o audio como pedaco final da MESMA mensagem.
+        chunk = {
+            "id": "chatnd-audio",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": texto}}],
+        }
+        return ("data: " + json.dumps(chunk) + "\n\n").encode("utf-8")
+
+    async def _sintetizar_e_salvar(self, fala, user_id):
+        # Sintese + save num so lugar, para o keepalive AWAIT isto como uma task. Best-effort
+        # ABSOLUTO: NUNCA levanta (nem BaseException) - devolve a URL ou None. Assim a task
+        # nunca "morre com excecao" por dentro; o cancelamento e tratado por quem espera.
+        try:
+            dados = await self._sintetizar_openai(fala)
+            if not dados:
+                return None
+            return await self._salvar_audio(dados, user_id)
+        except (GeneratorExit, asyncio.CancelledError):
+            # Cancelada de fora (cliente fechou): propaga para a task encerrar limpa.
+            raise
+        except Exception:
+            log.exception("chatnd: sintese/save do audio falhou (o texto ja foi)")
+            return None
+
+    async def _emitir_audio_final(self, audio_ctx, texto):
+        # Emite o AUDIO (player + link) como chunk final, DEPOIS do texto (que ja streamou).
+        # 100% best-effort e a jusante: qualquer falha vira aviso discreto (ou nada), NUNCA
+        # mexe no texto. Player = <div><audio>URL</audio></div> (formato provado no 0.9.6:
+        # URL no CONTEUDO da tag, embrulhada em <div> para virar bloco). + link (requisito 3).
+        # 1.60.0: SEM cap de tamanho. KEEPALIVE durante sintese+save (chunk vazio a cada
+        # TTS_KEEPALIVE_SEG - a conexao SSE nao cai no ocioso, o player aparece assim que o
+        # save termina). CANCELAMENTO capturado (BaseException) - nunca morre MUDO.
+        v = self.valves
+        aviso = None
+        tarefa = None
+        try:
+            fala = _limpar_para_fala(texto)
+            log.info("chatnd: _emitir_audio_final (texto=%d chars, limpo=%d chars)",
+                     len(texto or ""), len(fala))
+            if not fala:
+                log.info("chatnd: audio pulado - texto limpo VAZIO (nada a falar)")
+                return
+            uid = (audio_ctx or {}).get("user_id")
+            # Sintese+save numa task; enquanto pendente, keepalive invisivel (content vazio).
+            tarefa = asyncio.ensure_future(self._sintetizar_e_salvar(fala, uid))
+            try:
+                intervalo = float(getattr(v, "TTS_KEEPALIVE_SEG", 2.0) or 0)
+            except Exception:
+                intervalo = 2.0
+            while True:
+                if intervalo <= 0:
+                    await tarefa
+                    break
+                done, _ = await asyncio.wait({tarefa}, timeout=intervalo)
+                if done:
+                    break
+                yield self._sse_conteudo("")   # keepalive: mantem o SSE vivo, nada visivel
+            url = tarefa.result()              # a task nunca levanta -> URL ou None
+            if url:
+                log.info("chatnd: audio EMITIDO (player + link)")
+                yield self._sse_conteudo(
+                    "\n\n<div><audio>" + url + "</audio></div>\n\n"
+                    "[Baixar o audio](" + url + ")")
+                # RETENCAO real (1.60.0): prune dos audios antigos, em background e
+                # best-effort - nao segura o stream nem quebra se falhar.
+                try:
+                    asyncio.ensure_future(self._prune_audios(uid))
+                except Exception:
+                    pass
+                return
+            log.info("chatnd: audio nao veio (sintese/save None) -> aviso discreto")
+            aviso = "\n\n_(Nao consegui gerar o audio desta vez; segue so em texto.)_"
+        except (GeneratorExit, asyncio.CancelledError):
+            # Cliente fechou a conexao DURANTE a sintese/save. NUNCA em silencio: loga e
+            # cancela a task pendente. O texto ja foi entregue; nada a fazer alem de encerrar.
+            if tarefa is not None and not tarefa.done():
+                tarefa.cancel()
+            log.warning("chatnd: audio CANCELADO (conexao fechada durante sintese/save) "
+                        "- o texto ja foi entregue")
+            raise
+        except Exception:
+            log.exception("chatnd: _emitir_audio_final falhou (o texto ja foi)")
+            aviso = None
+        if aviso:
+            yield self._sse_conteudo(aviso)
+
+    async def _prune_audios(self, user_id):
+        # RETENCAO real (best-effort, background): apaga os audios chatnd_tts DO USUARIO mais
+        # velhos que TTS_RETER_DIAS - arquivo (R2+local via Storage) E registro (Files). Sem
+        # isto, os mp3 acumulam sem limpeza (a divida silenciosa que a v1 nunca pagou). NUNCA
+        # levanta: qualquer falha e ignorada (o audio ja foi entregue; limpeza e secundaria).
+        try:
+            import time as _t
+            from open_webui.models.files import Files
+            from open_webui.storage.provider import Storage
+            if not user_id:
+                return
+            dias = int(getattr(self.valves, "TTS_RETER_DIAS", 30) or 30)
+            if dias <= 0:
+                return   # 0/negativo = retencao desligada (nunca apaga)
+            corte = _t.time() - dias * 86400
+            arquivos = await Files.get_files_by_user_id(user_id)
+            apagados = 0
+            for f in (arquivos or []):
+                meta = getattr(f, "meta", None) or {}
+                if not meta.get("chatnd_tts"):
+                    continue
+                if (getattr(f, "created_at", 0) or 0) >= corte:
+                    continue
+                caminho = getattr(f, "path", None)
+                if caminho:
+                    try:
+                        await asyncio.to_thread(Storage.delete_file, caminho)
+                    except Exception:
+                        log.exception("chatnd: prune - falha ao apagar o arquivo do Storage")
+                try:
+                    r = Files.delete_file_by_id(f.id)
+                    if hasattr(r, "__await__"):
+                        await r
+                    apagados += 1
+                except Exception:
+                    log.exception("chatnd: prune - falha ao apagar o registro Files")
+            if apagados:
+                log.info("chatnd: retencao - %d audio(s) antigo(s) apagado(s) (> %d dias)",
+                         apagados, dias)
+        except (GeneratorExit, asyncio.CancelledError):
+            raise
+        except Exception:
+            log.exception("chatnd: prune de audio falhou (ignorado; o audio ja foi)")
+
+    async def _stream_resiliente(self, body_iterator, audio_ctx=None):
         # Encaminha o stream do motor VERBATIM e, se nenhum conteudo passar
         # (ex.: motor caiu por quota/billing e devolveu vazio), emite a
         # MENSAGEM_INSTABILIDADE no lugar da resposta em branco.
         viu = False
         done_chunk = None
+        buffer_txt = []   # SAIDA DE VOZ: acumula o texto SO quando audio foi pedido
         try:
             async for chunk in body_iterator:
                 if isinstance(chunk, (bytes, bytearray)):
@@ -3536,8 +4030,13 @@ class Pipe:
                     txt = str(chunk)
                 if not viu and _tem_conteudo_sse(txt):
                     viu = True
-                if ("[DONE]" in txt) and (not viu):
-                    done_chunk = chunk  # segura o fim ate decidir
+                if audio_ctx is not None and "[DONE]" not in txt:
+                    buffer_txt.append(_texto_de_sse(txt))   # acumula, nao muda o chunk
+                # Segura o [DONE] se: (a) nada veio (para trocar por instabilidade), ou
+                # (b) audio foi pedido (para injetar o audio ANTES do fim). O TEXTO ja
+                # passou intacto - segurar so o [DONE] nao atrasa nem muda o texto.
+                if ("[DONE]" in txt) and (not viu or audio_ctx is not None):
+                    done_chunk = chunk
                     continue
                 yield chunk
         except Exception:
@@ -3556,18 +4055,41 @@ class Pipe:
             }
             yield ("data: " + json.dumps(falso) + "\n\n").encode("utf-8")
             yield b"data: [DONE]\n\n"
-        elif done_chunk is not None:
+            return
+        # viu == True: houve resposta. Se audio foi pedido, sintetiza DEPOIS do texto e
+        # emite o player/aviso ANTES do [DONE] - tudo best-effort e a jusante (o texto ja
+        # foi). Qualquer excecao aqui NAO afeta o texto ja entregue.
+        if audio_ctx is not None:
+            log.info("chatnd: stream terminou (viu=True) - iniciando sintese de audio")
+            try:
+                async for extra in self._emitir_audio_final(audio_ctx, "".join(buffer_txt)):
+                    yield extra
+            except (GeneratorExit, asyncio.CancelledError):
+                # Cliente fechou durante a sintese/save: NUNCA em silencio. O texto ja foi;
+                # propaga para o gerador encerrar limpo (nao tenta emitir o [DONE] depois).
+                log.warning("chatnd: stream de audio CANCELADO (cliente fechou) "
+                            "- o texto ja foi entregue")
+                raise
+            except Exception:
+                log.exception("chatnd: injecao de audio falhou (o texto ja foi)")
+        if done_chunk is not None:
             yield done_chunk
 
-    def _resposta_ou_aviso(self, resp, _ev=None):
+    def _resposta_ou_aviso(self, resp, _ev=None, audio_ctx=None):
         # Troca resposta em branco/erro do motor pela MENSAGEM_INSTABILIDADE.
         # Casos: (a) streaming saudavel -> StreamingResponse (encapsula iterador);
         # (b) falha do motor (ex.: quota/billing) -> JSONResponse com .body
         # {"error":{...}} e status >= 400, MESMO com stream=True (o erro ocorre
         # antes de o streaming comecar); (c) dict sem conteudo.
+        # audio_ctx (SAIDA DE VOZ): quando != None, o stream sintetiza o audio no fim.
         if hasattr(resp, "body_iterator"):
-            resp.body_iterator = self._stream_resiliente(resp.body_iterator)
+            if audio_ctx is not None:
+                log.info("chatnd: audio pedido + resposta em STREAM -> hook de sintese ligado")
+            resp.body_iterator = self._stream_resiliente(resp.body_iterator, audio_ctx)
             return resp
+        if audio_ctx is not None:
+            log.warning("chatnd: audio pedido mas resposta NAO e stream (sem body_iterator) "
+                        "- audio nao sera gerado neste turno")
         # status HTTP de erro (JSONResponse de falha)
         try:
             status = int(getattr(resp, "status_code", 200) or 200)
@@ -4406,6 +4928,25 @@ class Pipe:
                 "chatnd: pedido LIMPO para o roteamento -> %d chars (bruto tinha %d; "
                 "os <source> do anexo escondiam o pedido)", len(texto), len(_bruto),
             )
+
+        # SAIDA DE VOZ (1.59.0): detecta o PEDIDO de audio ANTES DO CLASSIFICADOR, para o
+        # roteador ver a PERGUNTA LIMPA (o gatilho de audio NAO e sinal de rota). Sem isto,
+        # "o que e X? me responde em audio" caia na rota ARQUIVO (o classificador lia
+        # "produza um audio") e a deteccao, la embaixo, nunca rodava. Limpa texto/_msgs_rota/
+        # body para o classificador, as travas, a busca E o modelo verem o limpo; liga
+        # _audio_ctx (o stream sintetiza no fim). SO dispara COM gatilho: mensagem sem audio
+        # nao e tocada -> roteamento intacto (a garantia do teste de aceite). Best-effort.
+        _audio_ctx = None
+        if getattr(self.valves, "TTS_ON", False):
+            _cfg_aud = _cfg_audio(self.valves)
+            if _pede_audio(texto, _cfg_aud):
+                _audio_ctx = {"user_id": (__user__ or {}).get("id")}
+                texto = _sem_gatilho_audio(texto, _cfg_aud)
+                _msgs_rota = _msgs_com_pedido_limpo(body.get("messages"), texto)
+                body["messages"] = _msgs_rota
+                log.info("chatnd: saida de voz PEDIDA (proximidade+posicao) - texto limpo "
+                         "ANTES do roteador, sintetiza no fim")
+
         categoria = "geral"
         saida = ""
 
@@ -4841,4 +5382,4 @@ class Pipe:
             _ev["desfecho"] = "erro"
             _ev["erro_cat"] = "motor_erro"
             return MENSAGEM_INSTABILIDADE
-        return self._resposta_ou_aviso(resp, _ev)
+        return self._resposta_ou_aviso(resp, _ev, _audio_ctx)
