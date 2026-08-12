@@ -337,7 +337,8 @@ def main():
         print(("  OK   " if r else "  FALHOU  ") + "caso %s: %s" % (cid, desc))
         ok = ok and r
 
-    print("\n" + ("FASE 3: TODOS OS 9 CASOS PASSARAM" if ok else "FASE 3: HOUVE FALHA"))
+    print("\n" + ("FASE 3: TODOS OS %d CASOS PASSARAM" % len(CASOS) if ok
+                  else "FASE 3: HOUVE FALHA"))
     return 0 if ok else 1
 
 
