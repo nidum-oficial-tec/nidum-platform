@@ -277,6 +277,24 @@ def caso9(C):
     return "nidum_brasil" in ass and "produtos" in ass
 
 
+def caso10(C):
+    # CONCEITUAL NAO REGRIDE (criterio de aceite de D1/D3/D4/D5/D7): mesmo com ACERVOS de
+    # score ALTO e casando o assunto, uma pergunta CONCEITUAL mantem TODA a FONTE acima de
+    # TODO ACERVOS. A FONTE nunca e rebaixada quando conceitual=True.
+    pool = [
+        _chunk("ACERVOS > Reunioes > Atas > ACA_Convergencia_2026-07-20.md", 0.95,
+               "3 - Acervos Institucionais/Reunioes/Atas"),
+        _chunk("FONTE > Documento Fundador v30.md", 0.40, "1 - Fonte"),
+        _chunk("FONTE > Empresas Vivas.md", 0.35, "1 - Fonte"),
+        _chunk("ACERVOS > Academia > ACA_Guia_Integracao.md", 0.90,
+               "3 - Acervos Institucionais/Academia"),
+    ]
+    out = C._selecionar_e_ordenar(_sources(pool), {"academia"}, MAPA, True)
+    f_idx = [i for i, o in enumerate(out) if o.get("colecao") == "FONTE"]
+    a_idx = [i for i, o in enumerate(out) if o.get("colecao") == "ACERVOS"]
+    return bool(f_idx) and bool(a_idx) and max(f_idx) < min(a_idx)
+
+
 CASOS = [
     ("1", "Ancora FONTE nunca some (teto <=3)", caso1),
     ("2", "Sem piorar / expandir-nunca-encolher; ordem entre FONTES preservada", caso2),
@@ -287,6 +305,7 @@ CASOS = [
     ("7", "Diversidade 3-way: informativo + ata + registro juntos", caso7),
     ("8", "Trava 5: pergunta conceitual mantem FONTE no topo", caso8),
     ("9", "Multi-assunto: MVP Ipanema -> nidum_brasil E produtos", caso9),
+    ("10", "Conceitual NAO regride: toda FONTE acima de todo ACERVOS (D1/D3/D4/D5/D7)", caso10),
 ]
 
 FUNCS_FASE3 = ("_classificar_trecho", "_assuntos_da_pergunta", "_selecionar_e_ordenar")
