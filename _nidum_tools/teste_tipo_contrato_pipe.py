@@ -58,6 +58,21 @@ def main():
                C._f3_assuntos("ACA > ACA_Convergencia_10062026_v1.md", fatia)
                == {"academia"}) and ok
 
+    # _assuntos_da_pergunta: FRONTEIRA DE PALAVRA (apelidos curtos nao casam dentro de
+    # palavras). Repro do bug: 'pr' de plataformas_regionais em 'projeto'.
+    ap1 = C._assuntos_da_pergunta("qual o status do projeto?", fatia)
+    ok = check("apelido curto NAO casa dentro de palavra ('pr' em 'projeto')",
+               "plataformas_regionais" not in ap1) and ok
+    ok = check("'resposta'/'versao'/'busca' nao disparam sp/rs/sc",
+               not (C._assuntos_da_pergunta("me da uma resposta na versao da busca", fatia)
+                    & {"plataformas_regionais"})) and ok
+    ok = check("apelido de 1 palavra casa como token: 'fazenda' em pergunta",
+               "fazenda" in C._assuntos_da_pergunta("como esta o cronograma da Fazenda?", fatia)) and ok
+    ok = check("apelido FRASE casa por substring: 'nidum mundo'",
+               "nidum_mundo" in C._assuntos_da_pergunta("novidades do Nidum Mundo", fatia)) and ok
+    ok = check("apelido curto casa quando e TOKEN de verdade: 'pr'",
+               "plataformas_regionais" in C._assuntos_da_pergunta("como vai a regional PR?", fatia)) and ok
+
     print("\n" + ("CONTRATO DE TIPO (PIPE) OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
 

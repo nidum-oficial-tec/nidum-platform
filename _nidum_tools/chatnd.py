@@ -3216,15 +3216,26 @@ def _classificar_trecho(nome, corpo, mapa):
 
 def _assuntos_da_pergunta(texto, mapa):
     # assunto(s) da PERGUNTA por apelido/sigla. Nao filtra - so informa o boost.
+    # FRONTEIRA DE PALAVRA: apelido de UMA palavra casa como TOKEN inteiro (igual sigla);
+    # apelido FRASE ('fazenda fortaleza', 'nidum mundo') casa por substring. Sem isto,
+    # apelidos curtos (pr/sp/rs/sc de plataformas_regionais) casariam DENTRO de palavras
+    # comuns ('pr' em 'projeto', 'sp' em 'resposta') e quase toda pergunta ganharia o
+    # assunto no boost - ruido que envenena a medicao.
     t = _f3_fold(texto)
-    tokens = set(t.split())
+    tokens = set(re.findall(r"[a-z0-9]+", t))
     achados = set()
     for chave, info in _f3_assuntos_dict(mapa).items():
         if chave.startswith("_"):
             continue
-        if any(_f3_fold(ap) in t for ap in (info.get("apelidos") or [])):
-            achados.add(chave)
-        elif any(_f3_fold(sg) in tokens for sg in (info.get("siglas") or [])):
+        casou = False
+        for ap in (info.get("apelidos") or []):
+            apf = _f3_fold(ap)
+            if (" " in apf and apf in t) or (" " not in apf and apf in tokens):
+                casou = True
+                break
+        if not casou:
+            casou = any(_f3_fold(sg) in tokens for sg in (info.get("siglas") or []))
+        if casou:
             achados.add(chave)
     return achados
 
