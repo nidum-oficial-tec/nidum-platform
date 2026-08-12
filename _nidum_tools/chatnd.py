@@ -1,9 +1,26 @@
 """
 title: ChatND
 author: Nidum
-version: 1.60.0
+version: 1.61.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.61.0:
+    - OBSERVABILIDADE DE RANKING (Fase 0 do trabalho de rankeamento). Nova valve
+      DEBUG_TRECHOS (default OFF): quando ON, o pipe REGISTRA no log a lista de trechos
+      que a busca retornou, na ORDEM do reranker, com a NOTA de cada um (metadata.score,
+      ou a distancia como fallback), o tamanho em chars, a fonte e a pasta. Se quem
+      pergunta for ADMIN, tambem EXIBE o mesmo relatorio via status (evento a jusante -
+      NAO toca no stream da resposta; prioridade STREAM INTOCADO preservada). Best-effort:
+      try/except em volta do emit, a resposta nunca degrada se a observabilidade falhar.
+    - POR QUE: sem ver QUAIS trechos entraram e com que nota, nao da para avaliar nenhuma
+      mudanca de ranking (a resposta cita a origem, mas nao a selecao nem o score). E a
+      base de medicao das fases seguintes (corte por relevancia, planilhas, metadados).
+    - COMO ACENDER: Admin -> Functions -> ChatND -> Valves -> DEBUG_TRECHOS = on. Como a
+      valve e PERSISTIDA no banco, o default OFF do codigo so vale na primeira carga.
+    - Fiacao: _contexto_documento ganha o parametro emitter (default None, retrocompativel);
+      a rota documentos passa __event_emitter__. Funcao pura _relatorio_trechos monta o texto.
+    - TESTE (teste_debug_trechos.py): exercita _relatorio_trechos (PURA) - ordem preservada,
+      nota formatada, fallback para distancia, e o caso de busca vazia. Nao toca na base.
   1.60.0:
     - SAIDA DE VOZ robusta (o player nao aparecia porque o SAVE demorava ~62s e o cliente
       ja fechava o stream). Tres pecas: (1) KEEPALIVE - durante sintese+save, emite um chunk
@@ -3002,6 +3019,46 @@ def _montar_contexto(sources):
     return "\n\n".join(blocos)
 
 
+def _relatorio_trechos(sources):
+    # OBSERVABILIDADE (valve DEBUG_TRECHOS). Descreve os trechos que a busca retornou,
+    # na ORDEM em que o reranker os colocou, com a NOTA de cada um. Sem isto nao da
+    # para avaliar mudanca de ranking: a resposta cita a origem, mas nao QUAIS trechos
+    # entraram nem com que nota (o corte por RELEVANCE_THRESHOLD acontece antes e nao
+    # deixa rastro). PURO: le 'sources', nao altera nada; nao faz rede.
+    # A nota vem de metadata['score'] (o cross-encoder grava ali); se faltar, cai para
+    # a distancia (distances[i]) como aproximacao - o rotulo diz qual dos dois e.
+    linhas = []
+    n = 0
+    for src in sources or []:
+        docs = src.get("document") or []
+        metas = src.get("metadata") or []
+        dists = src.get("distances") or []
+        for i, doc in enumerate(docs):
+            n += 1
+            meta = metas[i] if i < len(metas) else {}
+            fonte = (meta or {}).get("name") or (meta or {}).get("source") or "documento"
+            pasta = _pasta_do_doc(str(doc))
+            score = (meta or {}).get("score")
+            origem_nota = "score"
+            if score is None and i < len(dists):
+                score = dists[i]
+                origem_nota = "dist"
+            try:
+                nota_txt = origem_nota + "=" + ("%.4f" % float(score))
+            except (TypeError, ValueError):
+                nota_txt = "nota=n/d"
+            corpo = re.sub(r"\s+", " ", str(doc)).strip()
+            linhas.append(
+                "%2d. %s | chars=%d | fonte=%s%s | %s"
+                % (n, nota_txt, len(str(doc)), str(fonte),
+                   (" | pasta: " + pasta if pasta else ""), corpo[:120])
+            )
+    if not linhas:
+        return "DEBUG_TRECHOS: a busca retornou ZERO trechos (RAG vazio)."
+    cab = "DEBUG_TRECHOS: %d trecho(s) recuperado(s), ordem do reranker:" % len(linhas)
+    return cab + "\n" + "\n".join(linhas)
+
+
 async def _tavily_buscar(api_key, query, *, max_results=3, search_depth="basic",
                          topic=None, days=None, raw_content=False, timeout=20):
     # Chama a API do Tavily DIRETO, para pedir os params de recencia que o wrapper do OWUI
@@ -3358,6 +3415,14 @@ class Pipe:
         TTS_MAX_PALAVRAS: int = Field(default=30)   # acima -> exige pedido numa PONTA
         TTS_RETER_DIAS: int = Field(default=30)          # politica de retencao (LGPD)
         MOSTRAR_ROTA: bool = Field(default=False)
+        # OBSERVABILIDADE DE RANKING (Fase 0). Default OFF. ON -> o pipe REGISTRA no log
+        # a lista de trechos que a busca retornou (ordem do reranker) com a NOTA de cada
+        # um; e, se quem pergunta for ADMIN, EXIBE o mesmo via status (evento a jusante,
+        # NAO toca no stream da resposta). Ferramenta de MEDICAO: sem ela nao da para
+        # avaliar mudanca de ranking. Best-effort - nunca degrada a resposta. Persistida
+        # no banco (o default OFF do codigo so vale na PRIMEIRA carga; para acender/apagar
+        # numa instalacao que ja salvou, use o painel).
+        DEBUG_TRECHOS: bool = Field(default=False)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
         # Antes era UMA valve (FUNDADORES_SEMPRE) ligando as duas coisas de uma vez, com
@@ -3548,7 +3613,8 @@ class Pipe:
             src["distances"] = distancias[0]
         return [src]
 
-    async def _contexto_documento(self, request, user, texto, texto_atual=None):
+    async def _contexto_documento(self, request, user, texto, texto_atual=None,
+                                  emitter=None):
         # Recupera trechos (hybrid + reranker, config do Admin) e monta o contexto com
         # DUAS camadas: (1) o(s) documento(s) INTEIRO(S) mais bem ranqueados - evita
         # resposta fragmentada em "liste todos"; (2) os TRECHOS recuperados, que agora
@@ -3569,6 +3635,20 @@ class Pipe:
         #      final, cada um com ate FUNDADORES_MAX_CHARS (orcamento RESERVADO,
         #      para nao serem expulsos pelos ranqueados nem expulsa-los).
         sources = await self._buscar_sources(request, user, texto, texto_atual)
+
+        # OBSERVABILIDADE (valve DEBUG_TRECHOS). Best-effort e a JUSANTE do que importa:
+        # o log e a fonte duravel da medicao (o admin le no servidor); o status e so
+        # conveniencia para o admin no chat. Nunca degrada a resposta - qualquer falha
+        # aqui e engolida. Status NAO e chunk de conteudo: o stream da resposta fica
+        # intocado (prioridade da casa).
+        if self.valves.DEBUG_TRECHOS:
+            try:
+                rel = _relatorio_trechos(sources)
+                log.info("chatnd: %s", rel)
+                if emitter is not None and getattr(user, "role", "") == "admin":
+                    await self._emitir(emitter, rel)
+            except Exception:
+                log.exception("chatnd: falha ao montar/emitir DEBUG_TRECHOS")
 
         ordem = []
         for src in sources or []:
@@ -5322,7 +5402,7 @@ class Pipe:
             consulta = _texto_de_busca(_msgs_rota, 3) or texto
             try:
                 contexto = await self._contexto_documento(
-                    __request__, user, consulta, texto
+                    __request__, user, consulta, texto, emitter=__event_emitter__
                 )
             except Exception:
                 log.exception(
