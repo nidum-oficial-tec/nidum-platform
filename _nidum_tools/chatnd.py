@@ -1,9 +1,22 @@
 """
 title: ChatND
 author: Nidum
-version: 1.62.0
+version: 1.63.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.63.0:
+    - COTA POR-COLECAO no RETRIEVAL (a peca que faltava do desenho da Fase 3, achada no
+      teste vivo do D10). A busca GLOBAL deixava a FONTE (scores altos) INUNDAR o pool
+      (~41/48 no D10) e espremer o ACERVOS - o FAZ_Cronograma nem chegava aos recuperados;
+      o dial so reordena 'sources', entao nao adiantava. Agora, quando o dial esta EFETIVO,
+      cada colecao e buscada SEPARADAMENTE (query_collection por id): ACERVOS ganha vagas
+      GARANTIDAS (DIAL_COTA_ACERVOS=40) e a FONTE fica minoria (DIAL_COTA_FONTE=12). E a
+      'FONTE minoria garantida' no nivel do RETRIEVAL, nao so do rerank. Fora do dial, a
+      busca global (atual) segue intacta. Diagnostico embutido: buscar ACERVOS separado
+      isola se o cronograma aparece no top-40 (era inundacao) ou nao (embedding fraco).
+    - CLASSIFICADOR '| conceitual': EXCECAO calibrada no teste vivo - 'o que mudou/evoluiu
+      entre X e Y' (ex.: v29->v30) NAO e conceitual (pede o registro concreto da mudanca,
+      ex.: Quadro de Pessoas), senao a FONTE domina e enterra o operacional. Ver o D2.
   1.62.0:
     - DIAL DE RANKEAMENTO (Fase 3). Nova valve DIAL_FASE3 (default OFF): quando ON,
       reordena os TRECHOS recuperados pelo metadado POR-TRECHO derivado de meta['name']
@@ -1293,7 +1306,11 @@ CLASSIFICADOR = (
     "Nidum?'); 'documentos' ('como esta o cronograma da Fazenda?', 'o que foi decidido na "
     "convergencia da Academia?'). Vale MESMO que a pergunta nomeie um ecossistema, se o "
     "que se pede e o CONCEITO e nao o estado ('qual a filosofia da Academia?' -> "
-    "conceitual). NA DUVIDA, NAO marque - o operacional e o padrao seguro.\n"
+    "conceitual). EXCECAO: pergunta sobre o que MUDOU/EVOLUIU entre versoes ou periodos "
+    "('o que mudou da v29 para a v30?', 'o que evoluiu de X para Y?') NAO e conceitual - "
+    "ela pede o REGISTRO CONCRETO da mudanca (movimentacoes, decisoes, quadro de pessoas), "
+    "nao a definicao de um conceito; NAO marque. NA DUVIDA, NAO marque - o operacional e o "
+    "padrao seguro.\n"
     "MARCADOR DE RECENCIA (recente) - se a categoria for 'geral' E a pergunta for sobre "
     "o ESTADO ATUAL do mundo (cotacao/preco de hoje, placar de ontem, noticia recente, "
     "'ultimo/atual/agora/quem ganhou/quanto esta/quem e hoje'), acrescente ' | recente' "
@@ -4000,6 +4017,14 @@ class Pipe:
         # (nenhum trecho e removido). Best-effort: falha do dial preserva a ordem original,
         # a resposta NUNCA degrada. Persistida no banco.
         DIAL_FASE3: bool = Field(default=False)
+        # COTA POR-COLECAO (Fase 3, so quando DIAL_FASE3 efetivo). A busca GLOBAL deixa a
+        # FONTE (scores altos) INUNDAR o pool e espremer o ACERVOS - o cronograma (D10) nem
+        # chega aos 48. Com a cota, cada colecao e buscada SEPARADAMENTE: ACERVOS ganha
+        # vagas GARANTIDAS e a FONTE fica minoria. E a "FONTE minoria garantida" no nivel
+        # do RETRIEVAL (o dial so reordena o que foi recuperado). 0 num dos dois = desliga a
+        # cota daquela colecao (cai no k global). Calibravel na medicao.
+        DIAL_COTA_ACERVOS: int = Field(default=40)
+        DIAL_COTA_FONTE: int = Field(default=12)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
         # Antes era UMA valve (FUNDADORES_SEMPRE) ligando as duas coisas de uma vez, com
@@ -4126,7 +4151,7 @@ class Pipe:
         raw = self.valves.BASE_CONHECIMENTO_ID or ""
         return [b.strip() for b in re.split(r"[,\s]+", raw) if b.strip()]
 
-    async def _buscar_sources(self, request, user, texto, texto_atual=None):
+    async def _buscar_sources(self, request, user, texto, texto_atual=None, cota=None):
         # NORMALIZACAO DE DATAS: a pergunta diz "13/07", o arquivo se chama
         # ..._13072026.md e o corpo diz "13 de julho de 2026" - o BM25 nao casa esses
         # tokens e o denso ignora datas (causa provada da Q14). Expande a data em todas
@@ -4173,13 +4198,53 @@ class Pipe:
             log.warning("chatnd: nenhuma colecao de conhecimento acessivel a este usuario")
             return []
         cfg = request.app.state.config
+        _ef = lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(  # noqa: E731
+            query, prefix=prefix, user=user
+        )
+
+        # COTA POR-COLECAO (Fase 3): busca CADA colecao SEPARADAMENTE, com vaga propria -
+        # ACERVOS garantido, FONTE minoria. Sem isto, o corte global por score deixa a
+        # FONTE (scores altos) inundar o pool e o cronograma (D10) nem chega. cota =
+        # (k_fonte, k_acervos); 0 num deles cai no k global daquela colecao.
+        if cota:
+            k_fonte, k_acervos = cota
+            docs_all, metas_all, dists_all = [], [], []
+            for bid in bases:
+                lim_max = max(k_fonte or 0, k_acervos or 0, self.valves.TOP_K_DOCUMENTOS
+                              or cfg.TOP_K)
+                try:
+                    r = await query_collection(
+                        request, collection_names=[bid], queries=[texto],
+                        embedding_function=_ef, k=lim_max)
+                except Exception:
+                    log.exception("chatnd: cota - falha ao buscar colecao %s", bid)
+                    continue
+                d0 = ((r or {}).get("documents") or [[]])[0]
+                m0 = ((r or {}).get("metadatas") or [[]])[0]
+                di0 = ((r or {}).get("distances") or [[]])[0]
+                if not d0:
+                    continue
+                nome0 = ((m0[0] or {}).get("name") or "") if m0 else ""
+                eh_fonte = nome0.strip().upper().startswith("FONTE >")
+                lim = (k_fonte if eh_fonte else k_acervos) or lim_max
+                docs_all += d0[:lim]
+                metas_all += m0[:lim]
+                dists_all += (di0[:lim] if di0 else [])
+                log.info("chatnd: cota -> colecao %s (%s): %d trecho(s) de %d",
+                         bid, "FONTE" if eh_fonte else "ACERVOS", min(len(d0), lim), len(d0))
+            if not docs_all:
+                return []
+            src = {"source": {"name": "Base institucional Nidum"},
+                   "document": docs_all, "metadata": metas_all}
+            if dists_all:
+                src["distances"] = dists_all
+            return [src]
+
         resultado = await query_collection(
             request,
             collection_names=bases,
             queries=[texto],
-            embedding_function=lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(
-                query, prefix=prefix, user=user
-            ),
+            embedding_function=_ef,
             k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K,
         )
         # Adapta o retorno cru ({documents, metadatas, distances}) para o formato
@@ -4224,7 +4289,12 @@ class Pipe:
         #   3. PISO: fundadores que ainda nao entraram sao SEMPRE anexados ao
         #      final, cada um com ate FUNDADORES_MAX_CHARS (orcamento RESERVADO,
         #      para nao serem expulsos pelos ranqueados nem expulsa-los).
-        sources = await self._buscar_sources(request, user, texto, texto_atual)
+        # COTA por-colecao: so quando o dial esta EFETIVO (medicao/producao com dial ON).
+        # Garante vagas de ACERVOS no pool - senao o dial so reordena um pool ja inundado
+        # de FONTE (o cronograma do D10 nunca chega). Fora do dial, busca global (atual).
+        _cota = ((self.valves.DIAL_COTA_FONTE, self.valves.DIAL_COTA_ACERVOS)
+                 if _dial else None)
+        sources = await self._buscar_sources(request, user, texto, texto_atual, cota=_cota)
 
         # DIAL DE RANKEAMENTO (valve DIAL_FASE3). Reordena os trechos pelo metadado
         # por-trecho (de meta['name']): cota FONTE, boost assunto+tipo, recencia, diver-
