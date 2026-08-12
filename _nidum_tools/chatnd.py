@@ -29,6 +29,10 @@ changelog:
       isso a decisao e do LLM com contexto, nao de palavra-chave). O pipe le e passa a
       _contexto_documento -> dial; heuristica 'nao nomeia assunto' fica so como rede se o
       sinal faltar. HIPOTESE a validar na base viva (regra do classificador) - valve OFF.
+    - UserValves (DIAL_FASE3, DEBUG_TRECHOS): cada coautor liga na PROPRIA sessao. Efetivo
+      = valve GLOBAL (Admin) OR UserValve. Assim o revisor MEDE o dial + ve os trechos na
+      sua sessao com a global OFF - sem respingar em producao. A global segue o interruptor
+      de producao (ligar so apos o teste vivo).
     - NAO PUBLICAR sem revisao. Valve OFF por padrao; ligar so apos o Davi/revisor validar.
   1.61.0:
     - OBSERVABILIDADE DE RANKING (Fase 0 do trabalho de rankeamento). Nova valve
@@ -4063,6 +4067,14 @@ class Pipe:
         # tokens. A sonda mede se vale o peso; default OFF (snippet primeiro).
         WEB_RECENTE_RAW: bool = Field(default=False)
 
+    class UserValves(BaseModel):
+        # Valves POR-USUARIO (cada coautor liga na PROPRIA sessao, sem respingar em
+        # producao). O efetivo e OR com a valve global: ligar aqui afeta SO quem ligou;
+        # a global (Admin) segue como o interruptor de producao. Serve para MEDIR o dial
+        # (Fase 3) e ver os trechos (DEBUG) na sessao do revisor com a global OFF.
+        DIAL_FASE3: bool = Field(default=False)
+        DEBUG_TRECHOS: bool = Field(default=False)
+
     def __init__(self):
         self.valves = self.Valves()
         self._tool_cache = None
@@ -4187,7 +4199,12 @@ class Pipe:
         return [src]
 
     async def _contexto_documento(self, request, user, texto, texto_atual=None,
-                                  emitter=None, conceitual=None):
+                                  emitter=None, conceitual=None,
+                                  dial_on=None, debug_on=None):
+        # dial_on/debug_on = efetivo (global OR UserValve) calculado no chamador. Se None
+        # (chamada antiga), cai na valve global.
+        _dial = self.valves.DIAL_FASE3 if dial_on is None else dial_on
+        _debug = self.valves.DEBUG_TRECHOS if debug_on is None else debug_on
         # Recupera trechos (hybrid + reranker, config do Admin) e monta o contexto com
         # DUAS camadas: (1) o(s) documento(s) INTEIRO(S) mais bem ranqueados - evita
         # resposta fragmentada em "liste todos"; (2) os TRECHOS recuperados, que agora
@@ -4214,7 +4231,7 @@ class Pipe:
         # sidade. REFORCA nunca FILTRA. Best-effort: qualquer falha preserva a ordem
         # original (a resposta NUNCA degrada). Roda ANTES do DEBUG_TRECHOS para o log/
         # status refletirem a ordem que o modelo vai ver.
-        if self.valves.DIAL_FASE3:
+        if _dial:
             try:
                 ap = _assuntos_da_pergunta(texto or "", _FATIA_FASE3)
                 # conceitual: o SINAL do classificador (marcador '| conceitual', juiz >
@@ -4233,7 +4250,7 @@ class Pipe:
         # conveniencia para o admin no chat. Nunca degrada a resposta - qualquer falha
         # aqui e engolida. Status NAO e chunk de conteudo: o stream da resposta fica
         # intocado (prioridade da casa).
-        if self.valves.DEBUG_TRECHOS:
+        if _debug:
             try:
                 rel = _relatorio_trechos(sources)
                 log.info("chatnd: %s", rel)
@@ -5995,10 +6012,15 @@ class Pipe:
             # CONCEITUAL: marcador do CLASSIFICADOR (juiz > regex). O dial da Fase 3 usa
             # isto para manter a FONTE no topo em pergunta definicional/doutrinaria.
             conceitual = "conceitual" in saida
+            # UserValves: cada um liga o dial/debug na PROPRIA sessao. Efetivo = global
+            # OR do usuario -> o revisor mede com a global OFF, sem respingar em producao.
+            _uv = (__user__ or {}).get("valves")
+            dial_on = self.valves.DIAL_FASE3 or bool(getattr(_uv, "DIAL_FASE3", False))
+            debug_on = self.valves.DEBUG_TRECHOS or bool(getattr(_uv, "DEBUG_TRECHOS", False))
             try:
                 contexto = await self._contexto_documento(
                     __request__, user, consulta, texto, emitter=__event_emitter__,
-                    conceitual=conceitual,
+                    conceitual=conceitual, dial_on=dial_on, debug_on=debug_on,
                 )
             except Exception:
                 log.exception(
