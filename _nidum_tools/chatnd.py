@@ -1,9 +1,28 @@
 """
 title: ChatND
 author: Nidum
-version: 1.61.0
+version: 1.62.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.62.0:
+    - DIAL DE RANKEAMENTO (Fase 3). Nova valve DIAL_FASE3 (default OFF): quando ON,
+      reordena os TRECHOS recuperados pelo metadado POR-TRECHO derivado de meta['name']
+      (a chave da colecao = caminho do repo com ' > ' = pasta_funcional + arquivo) - NAO
+      do corpo (o cabecalho <!-- --> so existe no 1o chunk). Faixas: ACERVOS que casa o
+      ASSUNTO da pergunta primeiro; informativo cross-cutting (eixo-tipo); FONTE como
+      ancora/minoria (domina so em pergunta conceitual); demais ACERVOS. Recencia por
+      tipo (informativo/registro desempatam por data; FONTE atemporal). PRINCIPIO:
+      REFORCA nunca FILTRA, EXPANDE nunca ENCOLHE - nenhum trecho e removido. Best-effort:
+      falha do dial preserva a ordem original, a resposta NUNCA degrada.
+    - Regras de tipo/assunto vem da FATIA embutida (_FATIA_FASE3, ASCII), gerada do mapa
+      canonico UNICO da esteira (mapa_assuntos.json). Guarda de drift: teste_tipo_contrato_
+      pipe.py roda as MESMAS fixtures que a esteira (teste_tipo_contrato.py) - falha se
+      divergirem. Funcoes: _classificar_trecho/_assuntos_da_pergunta/_selecionar_e_ordenar.
+    - TESTES: teste_fase3.py (9 casos-invariante: ancora FONTE, expandir-nunca-encolher,
+      boost assunto/tipo, recencia por-tipo, diversidade, trava conceitual, multi-assunto);
+      teste_tipo_contrato_pipe.py (contrato cross-repo); demo_dial_d8_d9_d10.py (antes/
+      depois: D8 #4->#1, D9 nao regride, D10 cronograma acima da FONTE conceitual).
+    - NAO PUBLICAR sem revisao. Valve OFF por padrao; ligar so apos o Davi/revisor validar.
   1.61.0:
     - OBSERVABILIDADE DE RANKING (Fase 0 do trabalho de rankeamento). Nova valve
       DEBUG_TRECHOS (default OFF): quando ON, o pipe REGISTRA no log a lista de trechos
@@ -3059,6 +3078,517 @@ def _relatorio_trechos(sources):
     return cab + "\n" + "\n".join(linhas)
 
 
+# ==== FASE 3: DIAL DE RANKEAMENTO ================================================
+# Le o metadado POR-TRECHO de meta['name'] (a chave da colecao = caminho do repo com
+# ' > ' = pasta_funcional + arquivo), NAO do corpo (o cabecalho <!-- --> so existe no
+# 1o chunk). Principio: REFORCAR nunca FILTRAR, EXPANDIR nunca ENCOLHER - a saida contem
+# TODOS os trechos de entrada, so REORDENADOS. As regras de tipo/assunto vem do 'mapa'
+# (a fatia embutida em runtime; o teste_fase3.py passa o seu proprio MAPA). O contrato de
+# fixtures (teste_fase3 aqui; teste_tipo_contrato na esteira) quebra se os dois divergirem.
+def _f3_fold(s):
+    s = unicodedata.normalize("NFKD", s or "")
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
+def _f3_partes_nome(nome):
+    # meta['name'] = "TOPO > ... > arquivo.md" -> (stem, pasta_funcional).
+    partes = [p.strip() for p in (nome or "").split(">") if p.strip()]
+    arq = partes[-1] if partes else ""
+    stem = arq[:-3] if arq.lower().endswith(".md") else arq
+    return stem, "/".join(partes[:-1])
+
+
+def _f3_colecao(nome):
+    top = (nome or "").split(">", 1)[0].strip()
+    return "FONTE" if top.upper() == "FONTE" else "ACERVOS"
+
+
+def _f3_regras_tipo(mapa):
+    # Aceita o canonico (_tipo_regras) OU o tipos_de_fonte (fixture do teste_fase3).
+    r = mapa.get("_tipo_regras")
+    if r:
+        return (
+            [x.lower() for x in r.get("informativo_nome", [])],
+            [x.lower() for x in r.get("ata_nome", [])],
+            tuple(x.lower() for x in r.get("ata_prefixo", [])),
+            (r.get("ata_pasta_segmento") or "atas").lower(),
+        )
+    tf = mapa.get("tipos_de_fonte") or {}
+    info = [x.lower() for x in (tf.get("informativo", {}).get("deteccao_nome") or [])]
+    ata = [x.lower() for x in (tf.get("ata", {}).get("deteccao_nome") or [])]
+    return info, ata, tuple(), "atas"
+
+
+def _f3_tipo(nome, mapa):
+    if _f3_colecao(nome) == "FONTE":
+        return "fonte_doutrina"
+    stem, pf = _f3_partes_nome(nome)
+    s = _f3_fold(stem)
+    info_pats, ata_pats, ata_prefixos, ata_seg = _f3_regras_tipo(mapa)
+    if any(p in s for p in info_pats):
+        return "informativo"
+    segmentos = [_f3_fold(x) for x in pf.split("/")]
+    if ata_seg in segmentos:
+        return "ata"
+    if (ata_prefixos and s.startswith(ata_prefixos)) or any(p in s for p in ata_pats):
+        return "ata"
+    return "registro"
+
+
+def _f3_assuntos_dict(mapa):
+    # Aceita os DOIS formatos: {'assuntos': {...}} (MAPA do teste_fase3) OU os assuntos
+    # no TOPO (a fatia embutida, onde as chaves '_...' sao metadados).
+    a = mapa.get("assuntos")
+    if isinstance(a, dict):
+        return a
+    return {k: v for k, v in mapa.items()
+            if not k.startswith("_") and isinstance(v, dict)
+            and ("apelidos" in v or "siglas" in v or "pastas" in v)}
+
+
+def _f3_pastas_disc(mapa):
+    # {pasta_folded: assunto} para pastas listadas por UM so assunto (exclui as
+    # COMPARTILHADAS, tipo Reunioes/Atas - senao toda ata geral herdaria todo assunto).
+    cont, dono = {}, {}
+    for chave, info in _f3_assuntos_dict(mapa).items():
+        if chave.startswith("_"):
+            continue
+        for p in (info.get("pastas") or []):
+            if not p or "[" in p or "(" in p:
+                continue
+            pn = _f3_fold(p).strip("/")
+            if pn:
+                cont[pn] = cont.get(pn, 0) + 1
+                dono[pn] = chave
+    return {pn: dono[pn] for pn, c in cont.items() if c == 1}
+
+
+def _f3_assuntos(nome, mapa):
+    # assunto do TRECHO: sigla do arquivo U pasta DISCRIMINATIVA (do caminho em nome).
+    stem, pf = _f3_partes_nome(nome)
+    sig = stem.split("_", 1)[0] if "_" in stem else stem
+    pfn = _f3_fold(pf).strip("/")
+    achados = set()
+    for chave, info in _f3_assuntos_dict(mapa).items():
+        if chave.startswith("_"):
+            continue
+        if sig and sig in (info.get("siglas") or []):
+            achados.add(chave)
+    for pn, chave in _f3_pastas_disc(mapa).items():
+        if pfn and (pfn == pn or pfn.startswith(pn + "/")):
+            achados.add(chave)
+    return achados
+
+
+def _f3_data(corpo):
+    m = re.search(r"\bmodificado:\s*([^|>]+?)\s*(?:\||-->)", corpo or "")
+    return m.group(1).strip() if m else ""
+
+
+def _classificar_trecho(nome, corpo, mapa):
+    # {colecao, assuntos:set, tipo, data}. Tudo de meta['name'] (=nome); data do corpo.
+    return {
+        "colecao": _f3_colecao(nome),
+        "assuntos": _f3_assuntos(nome, mapa),
+        "tipo": _f3_tipo(nome, mapa),
+        "data": _f3_data(corpo),
+    }
+
+
+def _assuntos_da_pergunta(texto, mapa):
+    # assunto(s) da PERGUNTA por apelido/sigla. Nao filtra - so informa o boost.
+    t = _f3_fold(texto)
+    tokens = set(t.split())
+    achados = set()
+    for chave, info in _f3_assuntos_dict(mapa).items():
+        if chave.startswith("_"):
+            continue
+        if any(_f3_fold(ap) in t for ap in (info.get("apelidos") or [])):
+            achados.add(chave)
+        elif any(_f3_fold(sg) in tokens for sg in (info.get("siglas") or [])):
+            achados.add(chave)
+    return achados
+
+
+def _selecionar_e_ordenar(sources, assuntos_pergunta, mapa, conceitual):
+    # O DIAL. Classifica cada trecho e REORDENA (nunca remove - expandir nunca encolher).
+    # Faixas (bucket, maior = mais acima):
+    #   conceitual: FONTE domina (3); ACERVOS depois (1).
+    #   normal: ACERVOS que casa o ASSUNTO da pergunta (4); informativo cross-cutting,
+    #           eixo-TIPO (3); FONTE ancora/minoria (2); demais ACERVOS (1).
+    # Dentro da faixa: score desc, e a RECENCIA como desempate por-tipo (FONTE atemporal
+    # -> sem data; informativo/registro/ata -> data mais nova primeiro).
+    itens = []
+    for src in sources or []:
+        docs = src.get("document") or []
+        metas = src.get("metadata") or []
+        dists = src.get("distances") or []
+        for i, doc in enumerate(docs):
+            meta = metas[i] if i < len(metas) else {}
+            nome = (meta or {}).get("name") or (meta or {}).get("source") or ""
+            sc = (meta or {}).get("score")
+            if sc is None and i < len(dists):
+                sc = dists[i]
+            try:
+                sc = float(sc)
+            except (TypeError, ValueError):
+                sc = 0.0
+            info = _classificar_trecho(nome, str(doc), mapa)
+            itens.append({
+                "nome": nome, "colecao": info["colecao"], "tipo": info["tipo"],
+                "assuntos": info["assuntos"], "score": sc, "data": info["data"],
+            })
+    ap = assuntos_pergunta or set()
+
+    def _bucket(it):
+        if conceitual:
+            return 3 if it["colecao"] == "FONTE" else 1
+        if it["colecao"] == "ACERVOS" and (it["assuntos"] & ap):
+            return 4
+        if it["tipo"] == "informativo":
+            return 3
+        if it["colecao"] == "FONTE":
+            return 2
+        return 1
+
+    def _rec(it):
+        return "" if it["tipo"] == "fonte_doutrina" else (it["data"] or "")
+
+    itens.sort(key=lambda it: (_bucket(it), it["score"], _rec(it)), reverse=True)
+    return itens
+
+
+# Fatia embutida (ASCII) = mapa_assuntos.json da esteira via gerar_fatia. O pipe nao
+# le arquivo em runtime; a guarda de drift e o teste_tipo_contrato_pipe.py (mesmas
+# fixtures do canonico). NUNCA editar a mao - regerar na esteira e copiar.
+_FATIA_FASE3 = json.loads('''
+{
+  "_fixtures_tipo": {
+    "_nota": "Contrato compartilhado: a esteira roda por (stem, pasta_origem, colecao); o pipe roda por meta_name (chave ' > ' = pasta_funcional + arquivo). Ambos devem dar 'tipo'. Um teste em CADA repo roda estas fixtures e falha se divergirem.",
+    "casos": [
+      {
+        "colecao": "FONTE",
+        "meta_name": "FONTE > Nidum Documento Fundador - v30.md",
+        "pasta_origem": "1 - Fonte",
+        "stem": "Nidum Documento Fundador - v30",
+        "tipo": "fonte_doutrina"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Informacoes_Ecossistemas_1_a_15_julho_2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia",
+        "stem": "ACA_Informacoes_Ecossistemas_1_a_15_julho_2026",
+        "tipo": "informativo"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Informativo_Executivo_Nidum_4Edicao.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia/Informativos Executivos Nidum",
+        "stem": "ACA_Informativo_Executivo_Nidum_4Edicao",
+        "tipo": "informativo"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Convergencia_10062026_v1.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia",
+        "stem": "ACA_Convergencia_10062026_v1",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACERVOS > Reunioes > Atas > GER_Semanal_27-07-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "GER_Semanal_27-07-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MUN > MUN_Reuniao_Estrategica_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Nidum Mundo",
+        "stem": "MUN_Reuniao_Estrategica_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACERVOS > Financas e Gestao de Projetos > 3.1 EGP > 3.1.3 Portfolio de Projetos > 1. Projeto Fazenda Fortaleza > 1.1 Cronogramas > FAZ_Cronograma_31.07_v3.md",
+        "pasta_origem": "3 - Acervos Institucionais/Financas e Gestao de Projetos/3.1 EGP/3.1.3 Portfolio de Projetos/1. Projeto Fazenda Fortaleza/1.1 Cronogramas",
+        "stem": "FAZ_Cronograma_31.07_v3",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_BrandbookNidum_10072026_V1.md",
+        "pasta_origem": "3 - Acervos Institucionais/Marketing",
+        "stem": "MKT_BrandbookNidum_10072026_V1",
+        "tipo": "registro"
+      }
+    ]
+  },
+  "_tipo_regras": {
+    "_nota": "FONTE UNICA das regras de TIPO. converter.py (esteira) e o pipe (Fase 3) derivam DAQUI. Casamento com fold de acento. informativo/ata pelo NOME; ata tambem quando um SEGMENTO de pasta == 'atas'; senao registro; colecao FONTE = fonte_doutrina.",
+    "ata_nome": [
+      "_convergencia",
+      "atadereuniao",
+      "_reuniao",
+      "_conversa",
+      "_semanal"
+    ],
+    "ata_pasta_segmento": "atas",
+    "ata_prefixo": [
+      "ata_",
+      "ger_",
+      "cte_",
+      "ct_",
+      "cc_",
+      "ce_"
+    ],
+    "informativo_nome": [
+      "_informativo_executivo",
+      "_informacoes_ecossistemas"
+    ]
+  },
+  "academia": {
+    "apelidos": [
+      "academia"
+    ],
+    "pastas": [
+      "aca"
+    ],
+    "siglas": [
+      "ACA"
+    ]
+  },
+  "comunidades_vivas": {
+    "apelidos": [
+      "comunidades vivas",
+      "londrina"
+    ],
+    "pastas": [
+      "acervos/produtos/comunidades vivas - londrina",
+      "cvi"
+    ],
+    "siglas": [
+      "CVI"
+    ]
+  },
+  "fazenda": {
+    "apelidos": [
+      "fazenda",
+      "fazenda fortaleza",
+      "fazenda-ancora",
+      "fazendas vivas"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza",
+      "fan"
+    ],
+    "siglas": [
+      "FAN"
+    ]
+  },
+  "financeiro": {
+    "apelidos": [
+      "EGP",
+      "PGP",
+      "financas",
+      "financeiro",
+      "gestao de projetos",
+      "portfolio"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos"
+    ],
+    "siglas": [
+      "FIN"
+    ]
+  },
+  "fornecedores": {
+    "apelidos": [
+      "due diligence de parceiros",
+      "fornecedor",
+      "fornecedores"
+    ],
+    "pastas": [
+      "acervos/suprimentos e fornecedores/fornecedores"
+    ],
+    "siglas": []
+  },
+  "governanca_conselhos": {
+    "apelidos": [
+      "comite executivo",
+      "comite tecnico",
+      "conselho curador"
+    ],
+    "pastas": [],
+    "siglas": [
+      "CC",
+      "CE",
+      "CT"
+    ]
+  },
+  "juridico": {
+    "apelidos": [
+      "governanca juridica",
+      "juridico"
+    ],
+    "pastas": [
+      "jur"
+    ],
+    "siglas": [
+      "JUR"
+    ]
+  },
+  "marketing": {
+    "apelidos": [
+      "marketing"
+    ],
+    "pastas": [
+      "mkt"
+    ],
+    "siglas": [
+      "MKT"
+    ]
+  },
+  "nidum_brasil": {
+    "apelidos": [
+      "brasil",
+      "nidum brasil"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/2. projeto mvp ipanema",
+      "bra"
+    ],
+    "siglas": [
+      "BRA"
+    ]
+  },
+  "nidum_mundo": {
+    "apelidos": [
+      "mundo",
+      "nidum mundo"
+    ],
+    "pastas": [
+      "acervos/produtos/nidum mundo",
+      "mun"
+    ],
+    "siglas": [
+      "MUN"
+    ]
+  },
+  "operacoes": {
+    "apelidos": [
+      "operacoes"
+    ],
+    "pastas": [
+      "ope"
+    ],
+    "siglas": [
+      "OPE"
+    ]
+  },
+  "pessoas_cadastros": {
+    "apelidos": [
+      "cadastro",
+      "facilitador",
+      "pessoas",
+      "quadro de pessoas",
+      "quem e"
+    ],
+    "pastas": [
+      "acervos/tecnologia/ninho de agentes/chico/1 - cadastros"
+    ],
+    "siglas": []
+  },
+  "plataforma_tecnologica": {
+    "apelidos": [
+      "plataforma",
+      "plataforma tecnologica",
+      "tecnologia"
+    ],
+    "pastas": [
+      "acervos/tecnologia",
+      "tec"
+    ],
+    "siglas": [
+      "TEC"
+    ]
+  },
+  "plataformas_regionais": {
+    "apelidos": [
+      "df",
+      "eua",
+      "europa",
+      "plataformas regionais",
+      "pr",
+      "regional",
+      "rs",
+      "sc",
+      "sp"
+    ],
+    "pastas": [],
+    "siglas": []
+  },
+  "produtos": {
+    "apelidos": [
+      "produtos"
+    ],
+    "pastas": [
+      "acervos/produtos"
+    ],
+    "siglas": [
+      "PROD"
+    ]
+  },
+  "regulacao_governanca": {
+    "apelidos": [
+      "governanca",
+      "regulacao"
+    ],
+    "pastas": [],
+    "siglas": [
+      "REG"
+    ]
+  },
+  "sustentabilidade": {
+    "apelidos": [
+      "sustentabilidade"
+    ],
+    "pastas": [
+      "sus"
+    ],
+    "siglas": [
+      "SUS"
+    ]
+  }
+}
+''')
+
+
+def _f3_reordenar_sources(sources, ordenados):
+    # Reordena as listas paralelas de 'sources' na ordem do dial (por nome). NUNCA
+    # remove (expandir nunca encolher): quem nao veio do dial fica no fim, ordem original.
+    ordem = {}
+    for pos, it in enumerate(ordenados or []):
+        ordem.setdefault(it.get('nome'), pos)
+    novo = []
+    for src in sources or []:
+        docs = src.get('document') or []
+        metas = src.get('metadata') or []
+        dists = src.get('distances') or []
+        idx = list(range(len(docs)))
+        def _ch(i, metas=metas):
+            nome = (metas[i] or {}).get('name') if i < len(metas) else ''
+            return (ordem.get(nome, 10**6), i)
+        idx.sort(key=_ch)
+        novo.append({
+            'source': src.get('source'),
+            'document': [docs[i] for i in idx],
+            'metadata': [metas[i] for i in idx] if metas else [],
+            'distances': [dists[i] for i in idx] if dists else [],
+        })
+    return novo
+
+
 async def _tavily_buscar(api_key, query, *, max_results=3, search_depth="basic",
                          topic=None, days=None, raw_content=False, timeout=20):
     # Chama a API do Tavily DIRETO, para pedir os params de recencia que o wrapper do OWUI
@@ -3423,6 +3953,13 @@ class Pipe:
         # no banco (o default OFF do codigo so vale na PRIMEIRA carga; para acender/apagar
         # numa instalacao que ja salvou, use o painel).
         DEBUG_TRECHOS: bool = Field(default=False)
+        # DIAL DE RANKEAMENTO (Fase 3). Default OFF. ON -> reordena os trechos recuperados
+        # pelo metadado por-trecho (colecao/tipo/assunto de meta['name']): cota FONTE
+        # (minoria/ancora; domina so em pergunta conceitual), boost por assunto+tipo,
+        # recencia por tipo, diversidade. REFORCA nunca FILTRA / EXPANDE nunca ENCOLHE
+        # (nenhum trecho e removido). Best-effort: falha do dial preserva a ordem original,
+        # a resposta NUNCA degrada. Persistida no banco.
+        DIAL_FASE3: bool = Field(default=False)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
         # Antes era UMA valve (FUNDADORES_SEMPRE) ligando as duas coisas de uma vez, com
@@ -3635,6 +4172,23 @@ class Pipe:
         #      final, cada um com ate FUNDADORES_MAX_CHARS (orcamento RESERVADO,
         #      para nao serem expulsos pelos ranqueados nem expulsa-los).
         sources = await self._buscar_sources(request, user, texto, texto_atual)
+
+        # DIAL DE RANKEAMENTO (valve DIAL_FASE3). Reordena os trechos pelo metadado
+        # por-trecho (de meta['name']): cota FONTE, boost assunto+tipo, recencia, diver-
+        # sidade. REFORCA nunca FILTRA. Best-effort: qualquer falha preserva a ordem
+        # original (a resposta NUNCA degrada). Roda ANTES do DEBUG_TRECHOS para o log/
+        # status refletirem a ordem que o modelo vai ver.
+        if self.valves.DIAL_FASE3:
+            try:
+                ap = _assuntos_da_pergunta(texto or "", _FATIA_FASE3)
+                # conceitual = a pergunta NAO nomeia um assunto (heuristica calibravel):
+                # ai a FONTE domina; se nomeia assunto, e operacional/relacional.
+                ordenados = _selecionar_e_ordenar(sources, ap, _FATIA_FASE3, not ap)
+                sources = _f3_reordenar_sources(sources, ordenados)
+                log.info("chatnd: dial Fase 3 aplicado (assuntos=%s, conceitual=%s)",
+                         sorted(ap) or "-", not ap)
+            except Exception:
+                log.exception("chatnd: dial Fase 3 falhou; ordem original preservada")
 
         # OBSERVABILIDADE (valve DEBUG_TRECHOS). Best-effort e a JUSANTE do que importa:
         # o log e a fonte duravel da medicao (o admin le no servidor); o status e so
