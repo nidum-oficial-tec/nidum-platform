@@ -73,6 +73,25 @@ def main():
     ok = check("apelido curto casa quando e TOKEN de verdade: 'pr'",
                "plataformas_regionais" in C._assuntos_da_pergunta("como vai a regional PR?", fatia)) and ok
 
+    # 'ata como PALAVRA' pega as VARIACOES plausiveis (nao so o caso exato) SEM pegar
+    # 'plataforma'/'atalho'. Direto no _f3_tipo (via meta_name), com as regras da fatia.
+    reg = fatia["_tipo_regras"]
+
+    def tipo(meta):
+        return C._f3_tipo(meta, {"_tipo_regras": reg})
+    ok = check("ata PALAVRA: 'PROD_Ata Dossie' (com espaco) -> ata",
+               tipo("PROD > PROD_Ata Dossie parte 3.md") == "ata") and ok
+    ok = check("ata PALAVRA: 'X_Reuniao_Ata' (no FIM do nome) -> ata",
+               tipo("BRA > BRA_Reuniao_Ata.md") == "ata") and ok
+    ok = check("ata PALAVRA: 'X_Ata_2026' (entre separadores) -> ata",
+               tipo("TEC > TEC_Ata_2026.md") == "ata") and ok
+    ok = check("NEGATIVO: 'plataforma' NAO vira ata",
+               tipo("TEC > TEC_PlataformaInternaJuridico.md") == "registro") and ok
+    ok = check("NEGATIVO: 'atalho' NAO vira ata",
+               tipo("OPE > OPE_Atalho_de_Processo.md") == "registro") and ok
+    ok = check("NEGATIVO: 'datas' NAO vira ata (ata dentro de outra palavra)",
+               tipo("MKT > MKT_Calendario_de_datas.md") == "registro") and ok
+
     print("\n" + ("CONTRATO DE TIPO (PIPE) OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
 

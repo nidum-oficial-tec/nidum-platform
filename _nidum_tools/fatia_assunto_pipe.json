@@ -57,6 +57,50 @@
         "pasta_origem": "3 - Acervos Institucionais/Marketing",
         "stem": "MKT_BrandbookNidum_10072026_V1",
         "tipo": "registro"
+      },
+      {
+        "_grupo": "C: atas de decisao nomeadas (sigla-routed, pf SEM 'atas' -> ata pelo NOME estreito)",
+        "colecao": "ACERVOS",
+        "meta_name": "BRA > BRA_ResumoReuniaoCoautores_20072026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "BRA_ResumoReuniaoCoautores_20072026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_Ata Dossie parte 3_11-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_Ata Dossie parte 3_11-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_ata nucleo de captacao_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_ata nucleo de captacao_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "_grupo": "C NEGATIVOS: 'plataforma' NAO e ata; docs por-conteudo -> registro (o estreito nao alarga)",
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_Discussao de Narrativa da Metodologia_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "MKT_Discussao de Narrativa da Metodologia_10-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_Alinhamento de time_03-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_Alinhamento de time_03-08-2026",
+        "tipo": "registro"
       }
     ]
   },
@@ -67,7 +111,11 @@
       "atadereuniao",
       "_reuniao",
       "_conversa",
-      "_semanal"
+      "_semanal",
+      "resumoreuniao"
+    ],
+    "ata_palavra": [
+      "ata"
     ],
     "ata_pasta_segmento": "atas",
     "ata_prefixo": [

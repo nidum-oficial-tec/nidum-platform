@@ -3131,11 +3131,12 @@ def _f3_regras_tipo(mapa):
             [x.lower() for x in r.get("ata_nome", [])],
             tuple(x.lower() for x in r.get("ata_prefixo", [])),
             (r.get("ata_pasta_segmento") or "atas").lower(),
+            [x.lower() for x in r.get("ata_palavra", [])],
         )
     tf = mapa.get("tipos_de_fonte") or {}
     info = [x.lower() for x in (tf.get("informativo", {}).get("deteccao_nome") or [])]
     ata = [x.lower() for x in (tf.get("ata", {}).get("deteccao_nome") or [])]
-    return info, ata, tuple(), "atas"
+    return info, ata, tuple(), "atas", []
 
 
 def _f3_tipo(nome, mapa):
@@ -3143,13 +3144,18 @@ def _f3_tipo(nome, mapa):
         return "fonte_doutrina"
     stem, pf = _f3_partes_nome(nome)
     s = _f3_fold(stem)
-    info_pats, ata_pats, ata_prefixos, ata_seg = _f3_regras_tipo(mapa)
+    info_pats, ata_pats, ata_prefixos, ata_seg, ata_palavras = _f3_regras_tipo(mapa)
     if any(p in s for p in info_pats):
         return "informativo"
     segmentos = [_f3_fold(x) for x in pf.split("/")]
     if ata_seg in segmentos:
         return "ata"
-    if (ata_prefixos and s.startswith(ata_prefixos)) or any(p in s for p in ata_pats):
+    # ata como PALAVRA (fronteira): pega 'Ata' isolado, nao 'plataforma'. Espelha o
+    # _tem_palavra do converter (esteira); as fixtures garantem que nao divergem.
+    palavra = any(re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z])", s)
+                  for w in ata_palavras)
+    if ((ata_prefixos and s.startswith(ata_prefixos)) or any(p in s for p in ata_pats)
+            or palavra):
         return "ata"
     return "registro"
 
