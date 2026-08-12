@@ -22,6 +22,13 @@ changelog:
       boost assunto/tipo, recencia por-tipo, diversidade, trava conceitual, multi-assunto);
       teste_tipo_contrato_pipe.py (contrato cross-repo); demo_dial_d8_d9_d10.py (antes/
       depois: D8 #4->#1, D9 nao regride, D10 cronograma acima da FONTE conceitual).
+    - CLASSIFICADOR: novo marcador '| conceitual' (mesmo mecanismo do '| triade'/'| recente':
+      'x' in saida). O JUIZ decide se a pergunta 'documentos' e DEFINICIONAL/DOUTRINARIA
+      (FONTE domina no dial) vs OPERACIONAL - juiz > regex, e o fiel da balanca do dial
+      (se marcar conceitual como operacional, a FONTE desce e D1/D3/D4/D5/D7 regridem; por
+      isso a decisao e do LLM com contexto, nao de palavra-chave). O pipe le e passa a
+      _contexto_documento -> dial; heuristica 'nao nomeia assunto' fica so como rede se o
+      sinal faltar. HIPOTESE a validar na base viva (regra do classificador) - valve OFF.
     - NAO PUBLICAR sem revisao. Valve OFF por padrao; ligar so apos o Davi/revisor validar.
   1.61.0:
     - OBSERVABILIDADE DE RANKING (Fase 0 do trabalho de rankeamento). Nova valve
@@ -1272,6 +1279,17 @@ CLASSIFICADOR = (
     "podem interagir para gerar regeneracao num ecossistema'), acrescente ' | "
     "triade' APOS a palavra-chave. Para pedidos de INVENTARIO, DEFINICAO ou FATO "
     "(ex.: 'quais os ecossistemas da Nidum'), NAO acrescente.\n"
+    "MARCADOR CONCEITUAL (conceitual) - se a categoria for 'documentos' E a pergunta for "
+    "DEFINICIONAL/DOUTRINARIA (o que SIGNIFICA um conceito, principio, termo ou valor da "
+    "Nidum; a filosofia/visao fundadora; 'o que e X', 'o que significa Y', 'qual o conceito "
+    "de Z', 'em que a Nidum acredita') - em vez de OPERACIONAL (estado de um projeto, "
+    "cronograma, quem/quando, o que foi decidido numa reuniao, atividade recente de um "
+    "ecossistema), acrescente ' | conceitual' APOS a palavra-chave. Ex.: 'documentos | "
+    "conceitual' ('o que e intencao reta?', 'o que e uma empresa viva?', 'o que e a "
+    "Nidum?'); 'documentos' ('como esta o cronograma da Fazenda?', 'o que foi decidido na "
+    "convergencia da Academia?'). Vale MESMO que a pergunta nomeie um ecossistema, se o "
+    "que se pede e o CONCEITO e nao o estado ('qual a filosofia da Academia?' -> "
+    "conceitual). NA DUVIDA, NAO marque - o operacional e o padrao seguro.\n"
     "MARCADOR DE RECENCIA (recente) - se a categoria for 'geral' E a pergunta for sobre "
     "o ESTADO ATUAL do mundo (cotacao/preco de hoje, placar de ontem, noticia recente, "
     "'ultimo/atual/agora/quem ganhou/quanto esta/quem e hoje'), acrescente ' | recente' "
@@ -1280,7 +1298,8 @@ CLASSIFICADOR = (
     "busca priorizar o novo (barato); marcar a menos entrega dado velho como atual (a dor). "
     "Exemplos: 'geral | recente' (cotacao do dolar hoje), 'geral' (quem foi Getulio "
     "Vargas).\n"
-    "Exemplos validos: 'documentos | triade', 'documentos', 'geral | recente', 'geral'."
+    "Exemplos validos: 'documentos | triade', 'documentos | conceitual', 'documentos', "
+    "'geral | recente', 'geral'."
 )
 
 GERADOR = (
@@ -4151,7 +4170,7 @@ class Pipe:
         return [src]
 
     async def _contexto_documento(self, request, user, texto, texto_atual=None,
-                                  emitter=None):
+                                  emitter=None, conceitual=None):
         # Recupera trechos (hybrid + reranker, config do Admin) e monta o contexto com
         # DUAS camadas: (1) o(s) documento(s) INTEIRO(S) mais bem ranqueados - evita
         # resposta fragmentada em "liste todos"; (2) os TRECHOS recuperados, que agora
@@ -4181,12 +4200,14 @@ class Pipe:
         if self.valves.DIAL_FASE3:
             try:
                 ap = _assuntos_da_pergunta(texto or "", _FATIA_FASE3)
-                # conceitual = a pergunta NAO nomeia um assunto (heuristica calibravel):
-                # ai a FONTE domina; se nomeia assunto, e operacional/relacional.
-                ordenados = _selecionar_e_ordenar(sources, ap, _FATIA_FASE3, not ap)
+                # conceitual: o SINAL do classificador (marcador '| conceitual', juiz >
+                # regex) e o fiel da balanca - decide se a FONTE domina. Se o sinal nao
+                # veio (conceitual=None), cai na heuristica 'nao nomeia assunto' como rede.
+                eh_conceitual = conceitual if conceitual is not None else (not ap)
+                ordenados = _selecionar_e_ordenar(sources, ap, _FATIA_FASE3, eh_conceitual)
                 sources = _f3_reordenar_sources(sources, ordenados)
                 log.info("chatnd: dial Fase 3 aplicado (assuntos=%s, conceitual=%s)",
-                         sorted(ap) or "-", not ap)
+                         sorted(ap) or "-", eh_conceitual)
             except Exception:
                 log.exception("chatnd: dial Fase 3 falhou; ordem original preservada")
 
@@ -5954,9 +5975,13 @@ class Pipe:
         # Rota de documentos: injeta o contexto recuperado (RAG).
         if categoria == "documentos" and texto:
             consulta = _texto_de_busca(_msgs_rota, 3) or texto
+            # CONCEITUAL: marcador do CLASSIFICADOR (juiz > regex). O dial da Fase 3 usa
+            # isto para manter a FONTE no topo em pergunta definicional/doutrinaria.
+            conceitual = "conceitual" in saida
             try:
                 contexto = await self._contexto_documento(
-                    __request__, user, consulta, texto, emitter=__event_emitter__
+                    __request__, user, consulta, texto, emitter=__event_emitter__,
+                    conceitual=conceitual,
                 )
             except Exception:
                 log.exception(
