@@ -1,9 +1,16 @@
 """
 title: ChatND
 author: Nidum
-version: 1.63.0
+version: 1.63.1
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.63.1:
+    - MOSTRAR_ROTA agora ADMIN-GATED (mesmo padrao do DEBUG_TRECHOS). Era a unica saida de
+      bastidor que, se LIGADA, respingava no usuario final: emitia o status 'ChatND
+      encaminhou para: X' para qualquer role. Continua OFF por default e segue evento
+      'status' (nunca chunk de conteudo - o stream da resposta ja era intocado); a mudanca e
+      que, mesmo ON, so o admin ve. Fecha a auditoria de vazamento de diagnostico com o dial
+      (1.63.0) ligado em producao: nos defaults, o usuario final nao recebe NENHUM diagnostico.
   1.63.0:
     - COTA POR-COLECAO no RETRIEVAL (a peca que faltava do desenho da Fase 3, achada no
       teste vivo do D10). A busca GLOBAL deixava a FONTE (scores altos) INUNDAR o pool
@@ -5859,7 +5866,10 @@ class Pipe:
             and categoria == "documentos"
         )
 
-        if self.valves.MOSTRAR_ROTA:
+        # ADMIN-GATE (mesmo padrao do DEBUG_TRECHOS): MOSTRAR_ROTA e observabilidade de
+        # bastidor. Mesmo LIGADA, so o admin ve o status da rota - o usuario final nunca
+        # recebe saida de diagnostico. E um evento 'status', nunca chunk de conteudo.
+        if self.valves.MOSTRAR_ROTA and getattr(user, "role", "") == "admin":
             await self._emitir(
                 __event_emitter__,
                 "ChatND encaminhou para: " + rotulo.get(categoria, categoria),
