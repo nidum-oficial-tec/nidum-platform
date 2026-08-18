@@ -72,6 +72,20 @@ def main():
     ok = check("parcial sem os papeis alvo -> cai em todas (nao vazio)",
                sel == ["M"]) and ok
 
+    # ---- etiquetas do contexto injetado (entrega C) ----
+    E = C._etiquetas_trecho
+    ok = check("etiqueta EXTERNA: IPPUL -> PROCEDENCIA EXTERNA",
+               any("PROCEDENCIA EXTERNA" in x
+                   for x in E("ACERVOS > Produtos > IPPUL > LEI_13542.md"))) and ok
+    ok = check("etiqueta RASCUNHO: v31",
+               any("RASCUNHO" in x
+                   for x in E("FONTE > Nidum Documento Fundador - v31 (rascunho).md"))) and ok
+    ok = check("etiqueta convergencia (fold de acento)",
+               any("convergencia" in x
+                   for x in E("ACERVOS > Reunioes > Atas > CTE_Convergencia_27062026.md"))) and ok
+    ok = check("arquivo comum -> sem etiqueta",
+               E("MKT > MKT_BrandbookNidum_10072026_V1.md") == []) and ok
+
     print("\n" + ("MAPA_COLECOES OK" if ok else "HOUVE FALHA"))
     return 0 if ok else 1
 

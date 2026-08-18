@@ -19,9 +19,10 @@ changelog:
     - DORMENTE em producao ate a valve ser preenchida (mesmo espirito do DIAL OFF). NAO
       publicar: embarca no ciclo unico da Fase 1. Testes: teste_mapa_colecoes.py (helpers
       puros) + 15 testes do pipe verdes.
-    - PENDENTE (nao nesta versao, registrado): etiquetas no contexto injetado (procedencia
-      externa do nd-externo, status=rascunho do v31, tipo=convergencia); teste de integracao
-      da rede mockando query_collection.
+    - ETIQUETAS no contexto injetado (entrega C): _etiquetas_trecho derivada do nome do
+      arquivo -> [PROCEDENCIA EXTERNA] (IPPUL/nd-externo: nao citar terceiro como Nidum),
+      [STATUS: RASCUNHO] (v31), [TIPO: convergencia]. Best-effort, nunca degrada.
+    - PENDENTE (registrado): teste de integracao da rede mockando query_collection.
   1.63.2:
     - FATIA EMBUTIDA sincronizada com a do disco (correcao prevista antes da Fase 1). O
       literal _FATIA_FASE3 (a que o pipe usa em PRODUCAO) tinha DRIFTADO da fatia gerada
@@ -3100,6 +3101,22 @@ def _pasta_do_doc(doc):
     return re.sub(r"^\s*\d+\s*-\s*", "", m.group(1).strip())
 
 
+def _etiquetas_trecho(fonte):
+    # ETIQUETAS (Fase 1, entrega C). Derivadas do NOME do arquivo (meta['name']); entram no
+    # contexto injetado para o modelo NAO tratar terceiro como posicao da Nidum nem rascunho
+    # como vigente. ASCII, best-effort (nome ausente -> sem etiqueta; nunca degrada).
+    f = _f3_fold(str(fonte or "")).lower()
+    et = []
+    if "ippul" in f or "nd-externo" in f or " > externo" in f:
+        et.append("[PROCEDENCIA EXTERNA: documento publico de terceiro (ex.: lei municipal) "
+                  "- NAO citar como posicao ou decisao da Nidum]")
+    if "rascunho" in f or "v31" in f:
+        et.append("[STATUS: RASCUNHO nao publicado - nao tratar como versao vigente]")
+    if "convergencia" in f:
+        et.append("[TIPO: convergencia (ata de decisao)]")
+    return et
+
+
 def _montar_contexto(sources):
     blocos = []
     for src in sources or []:
@@ -3111,7 +3128,11 @@ def _montar_contexto(sources):
             pasta = _pasta_do_doc(str(doc))
             rotulo = str(fonte) + (" | pasta: " + pasta if pasta else "")
             if doc:
-                blocos.append("--- Fonte: " + rotulo + " ---\n" + str(doc))
+                cabec = "--- Fonte: " + rotulo + " ---"
+                et = _etiquetas_trecho(fonte)
+                if et:
+                    cabec += "\n" + "\n".join(et)
+                blocos.append(cabec + "\n" + str(doc))
     return "\n\n".join(blocos)
 
 

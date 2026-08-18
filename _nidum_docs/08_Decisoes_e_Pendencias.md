@@ -36,12 +36,13 @@
 2. 🟠 **Volume / billing do Railway** — o volume antigo segue montado como backup; avaliar desmontá-lo após período de segurança. Billing OK ($3/$20).
 3. 🟡 **Grupos / permissionamento** — controle de acesso mais fino (plano esboçado: grupos Externo/Interno, base pública sem v30).
 
-### Fase 1 (2→7 coleções) — pendências para o Davi (2026-08-18)
+### Fase 1 (2→7 coleções) — status para o Davi (2026-08-18)
 - 🟠 **Publish único** do ciclo Fase 1 (pipe 1.64.0 + fatia 1.63.2): criar as 7 coleções no painel, preencher `MAPA_COLECOES` (json papel→id) e `BASE_CONHECIMENTO_ID`, então publicar. Até lá produção roda a fatia antiga e `MAPA_COLECOES` vazia (dormente).
-- 🟡 **Etiquetas no contexto injetado** (procedência externa do `nd-externo`, `status=rascunho` do v31, `tipo=convergencia`) — não implementadas no 1.64.0; entrega separada.
-- 🟡 **Fiação do `sincronizar.py`** (T4): trocar partição por pasta-de-topo por `colecao_destino`, espelho nas 2 antigas, resumo de sem-regra/excluídos no summary do Action. Exige decisão: piso-catástrofe por coleção nova e mecânica do freio para 9 coleções.
-- 🟡 **Confronto repo × produção**: rodar `migrar_sete_colecoes.py` com `NIDUM_URL`+`NIDUM_TOKEN` (GET) para a lista nominal do que existe só de um lado.
+- ✅ **Etiquetas no contexto injetado** (procedência externa do `nd-externo`, `status=rascunho` do v31, `tipo=convergencia`) — implementadas no 1.64.0 (`_etiquetas_trecho`), entram no mesmo publish.
+- ✅ **Fiação do `sincronizar.py`** (T4) — implementada (D-a/D-b/D-c): partição por `colecao_destino` + espelho + freio proporcional; dormente até trocar o `sync_config.json` pelo exemplo da Fase 1.
+- 🟡 **Confronto repo × produção**: rodar `migrar_sete_colecoes.py` com `NIDUM_URL`+`NIDUM_TOKEN` (GET) para a lista nominal do que existe só de um lado (o Davi executa com credencial).
 - 🟢 **`id vivo` de `BASE_CONHECIMENTO_ID`**: o default morto virou vazio; o id vivo mora no painel.
+- 🟢 **Higiene (sem agir agora):** 4 comentários pré-existentes não-ASCII no `chatnd.py` (linhas ~298/329/411/1561) violam a convenção ASCII-only de `_nidum_tools/*.py`; antecedem a Fase 1. Corrigir no **próximo ciclo de manutenção do pipe**, não agora.
 
 ### Retenção de conversas (spec decidida 2026-07-02 — a IMPLEMENTAR)
 - **Objetivo:** gestão de armazenamento.
