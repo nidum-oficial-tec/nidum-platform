@@ -1,9 +1,27 @@
 """
 title: ChatND
 author: Nidum
-version: 1.63.2
+version: 1.64.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.64.0:
+    - MAPA_COLECOES (Fase 1): valve nova (json papel->id das 7 colecoes novas; VAZIA por
+      default = comportamento atual). Helpers _parse_mapa_colecoes/_colecoes_para_busca.
+      Quando preenchida, _buscar_sources consulta SOMENTE as colecoes novas SELECIONADAS
+      pela heuristica (conceitual->fonte+normas; temporal/reuniao->atas+projetos; senao as
+      7); as 2 antigas ficam so em BASE_CONHECIMENTO_ID para ROLLBACK, FORA do conjunto
+      consultado (senao cada arquivo duplica e come o top-k). Com MAPA ativo a cota FONTE/
+      ACERVOS e ignorada (era conceito de 2 colecoes).
+    - REDE DE SEGURANCA: 0 trechos nas colecoes selecionadas -> reexecuta em TODAS as novas
+      (marca no log). Custo zero no caso normal (so dispara no vazio).
+    - BASE_CONHECIMENTO_ID: default morto (id de colecao aposentada) trocado por VAZIO (o id
+      vivo mora no banco/painel; default so vale na 1a carga). [id vivo: ver painel]
+    - DORMENTE em producao ate a valve ser preenchida (mesmo espirito do DIAL OFF). NAO
+      publicar: embarca no ciclo unico da Fase 1. Testes: teste_mapa_colecoes.py (helpers
+      puros) + 15 testes do pipe verdes.
+    - PENDENTE (nao nesta versao, registrado): etiquetas no contexto injetado (procedencia
+      externa do nd-externo, status=rascunho do v31, tipo=convergencia); teste de integracao
+      da rede mockando query_collection.
   1.63.2:
     - FATIA EMBUTIDA sincronizada com a do disco (correcao prevista antes da Fase 1). O
       literal _FATIA_FASE3 (a que o pipe usa em PRODUCAO) tinha DRIFTADO da fatia gerada
@@ -3688,6 +3706,45 @@ _FATIA_FASE3 = json.loads('''
 ''')
 
 
+# ---- MAPA_COLECOES (Fase 1): selecao das colecoes novas por papel ----
+_PAPEIS_MAPA = ("atas", "projetos", "fonte", "normas", "marca", "contratos", "externo")
+
+
+def _parse_mapa_colecoes(raw):
+    """Valve MAPA_COLECOES (json papel->id). Vazio/invalido -> {} (fallback total)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    out = {}
+    for k, v in d.items():
+        if isinstance(k, str) and isinstance(v, str) and v.strip():
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def _colecoes_para_busca(mapa, conceitual, temporal):
+    """(selecionadas, todas) de ids. mapa vazio -> (None, None) = comportamento atual.
+    conceitual -> fonte+normas; temporal/reuniao -> atas+projetos; senao -> todas as 7.
+    Nunca devolve vazio quando ha mapa (cai em todas)."""
+    if not mapa:
+        return None, None
+    todas = [mapa[p] for p in _PAPEIS_MAPA if mapa.get(p)]
+    if conceitual:
+        papeis = ("fonte", "normas")
+    elif temporal:
+        papeis = ("atas", "projetos")
+    else:
+        papeis = _PAPEIS_MAPA
+    sel = [mapa[p] for p in papeis if mapa.get(p)]
+    return (sel or todas), todas
+
+
 def _f3_reordenar_sources(sources, ordenados):
     # Reordena as listas paralelas de 'sources' na ordem do dial (por nome). NUNCA
     # remove (expandir nunca encolher): quem nao veio do dial fica no fim, ordem original.
@@ -4001,9 +4058,11 @@ class Pipe:
         # lembrar de reanexar a tool, e e o clique que ninguem lembra.
         MODELO_GERAL: str = Field(default="nidum-10---dia-a-dia")
         MODELO_DOCUMENTOS: str = Field(default="nidum-10---documentos")
-        BASE_CONHECIMENTO_ID: str = Field(
-            default="f2c8a48c-59f5-4c93-bd5c-b3d9516d7451"
-        )
+        # Default VAZIO de proposito: o id vivo mora no banco (valve persistida) e no
+        # painel - o default so vale na 1a carga. O antigo default apontava para um id
+        # MORTO (colecao aposentada), que enganava instalacao nova e a doc. Vazio forca
+        # config consciente e nao aponta para nada inexistente. [id vivo: ver painel]
+        BASE_CONHECIMENTO_ID: str = Field(default="")
         # 0 = HERDA o Top K do Admin (cfg.TOP_K) - e o default. Qualquer valor > 0
         # SOBREPOE o Admin (override consciente). Antes o default 10 sobrepunha o
         # Admin em silencio: os demais parametros (hybrid, reranker, BM25, k_reranker,
@@ -4092,6 +4151,14 @@ class Pipe:
         # cota daquela colecao (cai no k global). Calibravel na medicao.
         DIAL_COTA_ACERVOS: int = Field(default=40)
         DIAL_COTA_FONTE: int = Field(default=12)
+        # MAPA_COLECOES (Fase 1). JSON papel->id das 7 colecoes novas:
+        # {"atas":"<id>","projetos":"<id>","fonte":"<id>","normas":"<id>","marca":"<id>",
+        #  "contratos":"<id>","externo":"<id>"}. VAZIO (default) = comportamento ATUAL
+        # (busca em BASE_CONHECIMENTO_ID). Preenchida: a busca consulta SOMENTE as colecoes
+        # novas selecionadas pela heuristica; as 2 antigas ficam so em BASE_CONHECIMENTO_ID
+        # para ROLLBACK - FORA do conjunto consultado (senao cada arquivo duplica e come o
+        # top-k). Persistida no banco: preencher/limpar pelo painel.
+        MAPA_COLECOES: str = Field(default="")
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
         # Antes era UMA valve (FUNDADORES_SEMPRE) ligando as duas coisas de uma vez, com
@@ -4218,7 +4285,8 @@ class Pipe:
         raw = self.valves.BASE_CONHECIMENTO_ID or ""
         return [b.strip() for b in re.split(r"[,\s]+", raw) if b.strip()]
 
-    async def _buscar_sources(self, request, user, texto, texto_atual=None, cota=None):
+    async def _buscar_sources(self, request, user, texto, texto_atual=None, cota=None,
+                              conceitual=None):
         # NORMALIZACAO DE DATAS: a pergunta diz "13/07", o arquivo se chama
         # ..._13072026.md e o corpo diz "13 de julho de 2026" - o BM25 nao casa esses
         # tokens e o denso ignora datas (causa provada da Q14). Expande a data em todas
@@ -4256,7 +4324,15 @@ class Pipe:
         # vez e faz merge_and_sort_query_results(k) = corte global. Bonus: ele le TODO o
         # resto do Admin por dentro (hybrid, RERANKING_FUNCTION, TOP_K_RERANKER,
         # RELEVANCE_THRESHOLD, HYBRID_BM25_WEIGHT) - zero duplicacao de parametro.
-        bases = self._bases()
+        # MAPA_COLECOES (Fase 1): preenchida -> busca SO nas colecoes novas selecionadas
+        # (as 2 antigas ficam fora, so rollback). Vazia -> comportamento atual (BASE_...).
+        _temporal = (texto != _antes) or bool(re.search(
+            r"reuni|convergenc|\bata\b|encontro", (texto or "").lower()))
+        _mapa = _parse_mapa_colecoes(self.valves.MAPA_COLECOES)
+        _sel, _todas = _colecoes_para_busca(_mapa, bool(conceitual), _temporal)
+        if _sel is not None:
+            cota = None  # MAPA supersede a cota FONTE/ACERVOS (que e conceito de 2 colecoes)
+        bases = list(_sel) if _sel is not None else self._bases()
         if user:
             # query_collection NAO checa permissao (o get_sources_from_items checava).
             # Preserva o controle de acesso por usuario: so consulta o que ele pode ler.
@@ -4307,28 +4383,35 @@ class Pipe:
                 src["distances"] = dists_all
             return [src]
 
-        resultado = await query_collection(
-            request,
-            collection_names=bases,
-            queries=[texto],
-            embedding_function=_ef,
-            k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K,
-        )
-        # Adapta o retorno cru ({documents, metadatas, distances}) para o formato
-        # "sources" que _montar_contexto/_contexto_documento consomem.
-        docs = (resultado or {}).get("documents") or []
-        metas = (resultado or {}).get("metadatas") or []
-        if not docs or not docs[0]:
-            return []
-        src = {
-            "source": {"name": "Base institucional Nidum"},
-            "document": docs[0],
-            "metadata": (metas[0] if metas else []),
-        }
-        distancias = (resultado or {}).get("distances") or []
-        if distancias:
-            src["distances"] = distancias[0]
-        return [src]
+        # Busca GLOBAL (corte de k por score, comparavel entre colecoes por cross-encoder).
+        # Encapsulada para a REDE DE SEGURANCA do MAPA reexecutar nas 7 sem duplicar codigo.
+        async def _consulta_global(bs):
+            r = await query_collection(
+                request, collection_names=bs, queries=[texto],
+                embedding_function=_ef, k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K)
+            d = (r or {}).get("documents") or []
+            m = (r or {}).get("metadatas") or []
+            if not d or not d[0]:
+                return []
+            s = {"source": {"name": "Base institucional Nidum"},
+                 "document": d[0], "metadata": (m[0] if m else [])}
+            di = (r or {}).get("distances") or []
+            if di:
+                s["distances"] = di[0]
+            return [s]
+
+        out = await _consulta_global(bases)
+        # REDE DE SEGURANCA (so com MAPA ativo): 0 trechos nas colecoes selecionadas ->
+        # reexecuta em TODAS as novas. Marca no log. Custo zero no caso normal (so no vazio).
+        if _sel is not None and not out and _todas and (set(_todas) - set(bases)):
+            bases2 = sorted(set(_todas))
+            if user:
+                bases2 = sorted(await filter_accessible_collections(set(bases2), user))
+            if bases2:
+                log.info("chatnd: MAPA rede de seguranca -> 0 nas selecionadas; "
+                         "reexecuta nas %d colecoes novas", len(bases2))
+                out = await _consulta_global(bases2)
+        return out
 
     async def _contexto_documento(self, request, user, texto, texto_atual=None,
                                   emitter=None, conceitual=None,
@@ -4361,7 +4444,8 @@ class Pipe:
         # de FONTE (o cronograma do D10 nunca chega). Fora do dial, busca global (atual).
         _cota = ((self.valves.DIAL_COTA_FONTE, self.valves.DIAL_COTA_ACERVOS)
                  if _dial else None)
-        sources = await self._buscar_sources(request, user, texto, texto_atual, cota=_cota)
+        sources = await self._buscar_sources(request, user, texto, texto_atual, cota=_cota,
+                                             conceitual=conceitual)
 
         # DIAL DE RANKEAMENTO (valve DIAL_FASE3). Reordena os trechos pelo metadado
         # por-trecho (de meta['name']): cota FONTE, boost assunto+tipo, recencia, diver-
