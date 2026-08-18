@@ -94,19 +94,61 @@ def _get(url, token):
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
 
+def _lista_de(d):
+    # Normaliza a resposta paginada do fork: {"items":[...]} (KnowledgeAccessListResponse /
+    # KnowledgeFileListResponse), ou {"files":[...]}, ou uma lista crua. Sempre uma lista.
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return d.get("items") or d.get("files") or []
+    return []
+
+
+def _kbs_producao(base, token):
+    # GET /api/v1/knowledge/ e PAGINADO (?page=N, PAGE_ITEM_COUNT por pagina) e devolve
+    # {"items":[KB...], "total":N}. Pagina ate esgotar (guarda dura contra loop).
+    kbs, page = [], 1
+    while page <= 200:
+        _st, d = _get("%s/api/v1/knowledge/?page=%d" % (base, page), token)
+        itens = _lista_de(d)
+        if not itens:
+            break
+        kbs += [k for k in itens if isinstance(k, dict)]
+        total = d.get("total") if isinstance(d, dict) else None
+        if total is not None and len(kbs) >= total:
+            break
+        page += 1
+    return kbs
+
+
+def _arquivos_da_kb(base, token, kid):
+    # GET /api/v1/knowledge/{id}/files (paginado) -> nomes por meta.name (mesma leitura
+    # que o sincronizar.listar_colecao usa em producao).
+    nomes, page = [], 1
+    while page <= 500:
+        _st, d = _get("%s/api/v1/knowledge/%s/files?limit=1000&page=%d" % (base, kid, page), token)
+        itens = _lista_de(d)
+        if not itens:
+            break
+        for f in itens:
+            meta = (f or {}).get("meta") or {}
+            nomes.append(meta.get("name") or (f or {}).get("filename") or (f or {}).get("id"))
+        if len(itens) < 1000:
+            break
+        page += 1
+    return nomes
+
+
 def ler_producao(base, token):
     """{nome_kb: [nomes_de_arquivo]} de todas as knowledge bases. GET apenas."""
-    _st, bases = _get("%s/api/v1/knowledge/" % base, token)
     out = {}
-    for kb in bases or []:
-        arqs, files = [], kb.get("files")
-        if files is None:
-            _st2, det = _get("%s/api/v1/knowledge/%s" % (base, kb.get("id")), token)
-            files = (det or {}).get("files", [])
-        for f in files or []:
-            meta = f.get("meta") or {}
-            arqs.append(meta.get("name") or f.get("filename") or f.get("id"))
-        out[kb.get("name", kb.get("id", "?"))] = arqs
+    for kb in _kbs_producao(base, token):
+        kid = kb.get("id")
+        nome = kb.get("name") or kid or "?"
+        try:
+            out[nome] = _arquivos_da_kb(base, token, kid) if kid else []
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError):
+            out[nome] = []  # uma KB ilegivel nao derruba o confronto todo
     return out
 
 
