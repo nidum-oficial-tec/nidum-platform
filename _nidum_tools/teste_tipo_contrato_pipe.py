@@ -39,6 +39,13 @@ def main():
     casos = (fatia.get("_fixtures_tipo") or {}).get("casos") or []
     ok = True
 
+    # GUARDA DE DRIFT (fecha o ponto cego): a copia EMBUTIDA no pipe (_FATIA_FASE3) e a
+    # usada em PRODUCAO. Ate agora o teste so exercitava a fatia do DISCO (passada como
+    # arg) e nunca a embutida, entao um drift entre as duas passava silencioso. Agora
+    # falha se divergirem. (Ex.: pre-sync a embutida tinha 8 fixtures e sem 'ata_palavra'.)
+    ok = check("cofre: _FATIA_FASE3 embutido == fatia do disco (sem drift)",
+               C._FATIA_FASE3 == fatia) and ok
+
     ok = check("fatia embutida tem _tipo_regras e _fixtures_tipo",
                bool(fatia.get("_tipo_regras")) and len(casos) >= 6) and ok
 

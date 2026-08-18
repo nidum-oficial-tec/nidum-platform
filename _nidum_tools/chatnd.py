@@ -1,9 +1,21 @@
 """
 title: ChatND
 author: Nidum
-version: 1.63.1
+version: 1.63.2
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.63.2:
+    - FATIA EMBUTIDA sincronizada com a do disco (correcao prevista antes da Fase 1). O
+      literal _FATIA_FASE3 (a que o pipe usa em PRODUCAO) tinha DRIFTADO da fatia gerada
+      pela esteira (fatia_assunto_pipe.json): 8 fixtures e SEM 'ata_palavra'/'resumoreuniao';
+      agora 14 fixtures + 'ata_palavra' + 'resumoreuniao'. Copiado da fatia gerada (NAO
+      editado a mao). Regras de TIPO intactas: cte_/ct_/cc_/ce_/ger_/ata_ seguem em
+      ata_prefixo (cte_ e ata de comite, NAO contrato). Dial OFF -> ZERO mudanca de resposta.
+    - GUARDA DE DRIFT no teste_tipo_contrato_pipe.py: passa a exigir _FATIA_FASE3 == fatia
+      do disco. Fecha o ponto cego que deixava o drift passar calado (o teste so exercitava
+      a fatia do disco, nunca a embutida). 15/15 testes do pipe OK.
+    - NAO publicar isolado: embarca no publish da Fase 1 (2->6 colecoes). Ate esse publish,
+      PRODUCAO roda a fatia embutida ANTIGA. Doc de producao (HTML/03/04) atualiza no publish.
   1.63.1:
     - MOSTRAR_ROTA agora ADMIN-GATED (mesmo padrao do DEBUG_TRECHOS). Era a unica saida de
       bastidor que, se LIGADA, respingava no usuario final: emitia o status 'ChatND
@@ -3385,6 +3397,50 @@ _FATIA_FASE3 = json.loads('''
         "pasta_origem": "3 - Acervos Institucionais/Marketing",
         "stem": "MKT_BrandbookNidum_10072026_V1",
         "tipo": "registro"
+      },
+      {
+        "_grupo": "C: atas de decisao nomeadas (sigla-routed, pf SEM 'atas' -> ata pelo NOME estreito)",
+        "colecao": "ACERVOS",
+        "meta_name": "BRA > BRA_ResumoReuniaoCoautores_20072026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "BRA_ResumoReuniaoCoautores_20072026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_Ata Dossie parte 3_11-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_Ata Dossie parte 3_11-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_ata nucleo de captacao_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_ata nucleo de captacao_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "_grupo": "C NEGATIVOS: 'plataforma' NAO e ata; docs por-conteudo -> registro (o estreito nao alarga)",
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_Discussao de Narrativa da Metodologia_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "MKT_Discussao de Narrativa da Metodologia_10-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_Alinhamento de time_03-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_Alinhamento de time_03-08-2026",
+        "tipo": "registro"
       }
     ]
   },
@@ -3395,7 +3451,11 @@ _FATIA_FASE3 = json.loads('''
       "atadereuniao",
       "_reuniao",
       "_conversa",
-      "_semanal"
+      "_semanal",
+      "resumoreuniao"
+    ],
+    "ata_palavra": [
+      "ata"
     ],
     "ata_pasta_segmento": "atas",
     "ata_prefixo": [

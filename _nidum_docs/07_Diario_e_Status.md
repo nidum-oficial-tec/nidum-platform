@@ -13,6 +13,31 @@
 
 ---
 
+## 2026-08-18 — Correção da fatia embutida (staged) + arranque da Fase 1 (2→6 coleções)
+
+**A Fase 1 (dividir FONTE/ACERVOS em 6 coleções por tipo) começou pela correção prévia da fatia.**
+
+- **`_FATIA_FASE3` (embutida no `chatnd.py`) sincronizada com a fatia do disco** — `chatnd.py`
+  **1.63.2**, branch `fix/fatia-embed-sync`. A cópia embutida (a que **produção** usa) tinha
+  driftado da fatia gerada pela esteira: 8 fixtures, sem `ata_palavra`/`resumoreuniao`; agora
+  14 fixtures + `ata_palavra` + `resumoreuniao`. **Copiada** da fatia gerada (não editada à mão).
+  Regras de tipo intactas — `cte_/ct_/cc_/ce_/ger_/ata_` seguem em `ata_prefixo` (**`cte_` é ata
+  de comitê, não contrato**).
+- **Guarda de drift** nova no `teste_tipo_contrato_pipe.py`: exige `_FATIA_FASE3 == fatia do
+  disco`, fechando o ponto cego que deixava o drift passar calado. **15/15 testes do pipe OK**;
+  contrato de tipo cruzado da esteira OK.
+- **NÃO publicado agora** (decisão do Davi): embarca no **publish único da Fase 1**. **Até esse
+  publish, produção roda a fatia embutida ANTIGA.** Dial OFF → zero mudança de resposta hoje. A
+  doc de produção (HTML / 03 / 04) só atualiza no publish (REGRA DA DOC).
+- **Ajustes obrigatórios do Davi p/ a Fase 1** (registrados): (1) `cte_`→`nd-atas`, nunca
+  `nd-contratos`; (2) com `MAPA_COLECOES` ativa, busca só nas 6 novas — as 2 antigas ficam na
+  valve só p/ rollback, **fora** do conjunto consultado (senão duplica e come o top-k); (3)
+  `--dry-run` prova contagem: Σ(6 novas)==total(2 antigas), zero perdidos + lista nominal dos
+  sem-regra→`nd-normas`; (4) aceite inclui caso **ponta-a-ponta da esteira**; o espelho nas 2
+  antigas tem **prazo** — após o aceite param de RECEBER novos (nunca são apagadas).
+
+---
+
 ## 🏁 CICLO FECHADO (18-07-2026) — a reforma do chat único, de 1.29 a 1.36
 
 **O ChatND deixou de ser roteador de 6 caixas e virou uma fronteira: *é da Nidum, ou não é?***
