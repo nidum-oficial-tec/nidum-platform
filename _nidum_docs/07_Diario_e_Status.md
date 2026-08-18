@@ -13,6 +13,27 @@
 
 ---
 
+## 2026-08-18 (modo autônomo) — Fase 1 (2→7 coleções): T1–T3 em branches, sem publish
+
+**Sessão autônoma (~1h30). Nada em produção, nada em `main`, tudo em `feat/*` para aceite.**
+
+- **T1 — `colecao_destino.py`** (esteira, branch `feat/colecao-destino`, commit `20083f8`): regra
+  determinística arquivo→coleção (7 coleções), fonte única. Desempate de pasta normalizado
+  (segmento sem prefixo numérico). 10/10 testes da esteira. Prova de contagem: 105 = 97+8, zero
+  perdidos, sem-regra 0.
+- **T2 — `migrar_sete_colecoes.py`** (interface, branch `feat/fase1-colecoes`, `c296b2f6d`):
+  dry-run único modo; invariante + contagem + excluídos + cross-tab carimbo×regra + confronto
+  repo×produção (GET; pulado sem credencial) + template `MAPA_COLECOES`. Dry-run local rodado.
+- **T3 — pipe `chatnd.py` 1.64.0** (mesma branch, `5d9a40189`): valve `MAPA_COLECOES` +
+  busca só nas coleções novas selecionadas + rede de segurança + `BASE_CONHECIMENTO_ID` morto→
+  vazio. Dormente até a valve ser preenchida. 16/16 testes do pipe. **Não publicado.**
+- **Pendências** (ver 08): etiquetas no contexto injetado, fiação do `sincronizar.py` (T4, exige
+  decisão de freio), confronto repo×produção com credencial, publish único do ciclo Fase 1.
+- **Achado (não corrigido, fora de escopo):** `chatnd.py` tem 3 comentários pré-existentes com
+  caracteres não-ASCII (linhas ~297/328/410) — violam a convenção ASCII, mas antecedem esta sessão.
+
+---
+
 ## 2026-08-18 — Correção da fatia embutida (staged) + arranque da Fase 1 (2→6 coleções)
 
 **A Fase 1 (dividir FONTE/ACERVOS em 6 coleções por tipo) começou pela correção prévia da fatia.**

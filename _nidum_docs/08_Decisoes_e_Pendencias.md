@@ -23,6 +23,11 @@
 | D12 | **Continuidade: tudo no nome da empresa, chaves no Bitwarden** | A operação precisa sobreviver à saída de qualquer pessoa. |
 | D13 | **Migração de e-mail adiada** | Tudo está no `nidum.tec26@gmail.com` (provisório) até haver e-mail institucional. Recomendação aceita: usar e-mail genérico de função, não pessoal. |
 | D14 | **Ibrand para títulos** (além do logotipo) | Decisão do usuário (o brandbook reserva Ibrand ao logotipo, mas foi sobreposto); Ibrand tem cobertura PT completa. |
+| D15 | **Base em 7 coleções por tipo** (`nd-atas`, `nd-projetos`, `nd-fonte`, `nd-normas`, `nd-marca`, `nd-contratos`, `nd-externo`), saindo de 2 (FONTE/ACERVOS) | Permite roteamento de busca por tipo (busca só nas coleções relevantes) e etiquetas de procedência. `nd-externo` isola docs públicos de terceiros (IPPUL: leis municipais). |
+| D16 | **Regra de destino: CONTEÚDO decide, NOME confirma, PASTA desempata**; soberania de pasta `FONTE/`→`nd-fonte` e `IPPUL/`→`nd-externo` **acima** do conteúdo | Procedência inviolável (uma ata citada dentro da doutrina não vira `nd-atas`; lei de Londrina não entra em coleção interna). Fonte única: `esteira/_scripts/colecao_destino.py`. |
+| D17 | **`cte_/ct_/cc_/ce_/ger_/ata_` → `nd-atas`** (ata de comitê); `cte_` **nunca** `nd-contratos` | `cte_` é Comitê Técnico (ata), não contrato. `nd-contratos` só por nome (contrato/acordo/estatuto/cnpj) ou pasta jurídica. |
+| D18 | **Exclusão de indexação** (`testes/`, `Chico/1 - Cadastros`, backups `antes-da-correcao`, stubs <80 chars, OCR corrompido) — nada sai do repo | Gabaritos, dado pessoal e lixo não devem poluir a base; a exclusão é só de indexação, reversível. Sem-regra vai para `nd-normas` com warning visível. |
+| D19 | **Espelho nas 2 coleções antigas tem PRAZO** | Durante a transição, arquivo novo é indexado na coleção nova **e** nas 2 antigas (rede de rollback). Após o aceite da fase, as antigas **param de RECEBER** novos; **nunca são apagadas**. |
 
 ## Parte 2 — Pendências que precisam de decisão ou ação
 
@@ -30,6 +35,13 @@
 1. ✅ **Separação de memória (Postgres)** — CONCLUÍDA em 2026-07-02 (Postgres + pgvector + R2). Ver [07_Diario_e_Status](07_Diario_e_Status.md).
 2. 🟠 **Volume / billing do Railway** — o volume antigo segue montado como backup; avaliar desmontá-lo após período de segurança. Billing OK ($3/$20).
 3. 🟡 **Grupos / permissionamento** — controle de acesso mais fino (plano esboçado: grupos Externo/Interno, base pública sem v30).
+
+### Fase 1 (2→7 coleções) — pendências para o Davi (2026-08-18)
+- 🟠 **Publish único** do ciclo Fase 1 (pipe 1.64.0 + fatia 1.63.2): criar as 7 coleções no painel, preencher `MAPA_COLECOES` (json papel→id) e `BASE_CONHECIMENTO_ID`, então publicar. Até lá produção roda a fatia antiga e `MAPA_COLECOES` vazia (dormente).
+- 🟡 **Etiquetas no contexto injetado** (procedência externa do `nd-externo`, `status=rascunho` do v31, `tipo=convergencia`) — não implementadas no 1.64.0; entrega separada.
+- 🟡 **Fiação do `sincronizar.py`** (T4): trocar partição por pasta-de-topo por `colecao_destino`, espelho nas 2 antigas, resumo de sem-regra/excluídos no summary do Action. Exige decisão: piso-catástrofe por coleção nova e mecânica do freio para 9 coleções.
+- 🟡 **Confronto repo × produção**: rodar `migrar_sete_colecoes.py` com `NIDUM_URL`+`NIDUM_TOKEN` (GET) para a lista nominal do que existe só de um lado.
+- 🟢 **`id vivo` de `BASE_CONHECIMENTO_ID`**: o default morto virou vazio; o id vivo mora no painel.
 
 ### Retenção de conversas (spec decidida 2026-07-02 — a IMPLEMENTAR)
 - **Objetivo:** gestão de armazenamento.
