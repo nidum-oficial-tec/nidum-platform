@@ -42,6 +42,7 @@
 - ✅ **Fiação do `sincronizar.py`** (T4) — implementada (D-a/D-b/D-c): partição por `colecao_destino` + espelho + freio proporcional; dormente até trocar o `sync_config.json` pelo exemplo da Fase 1.
 - 🟡 **Confronto repo × produção**: rodar `migrar_sete_colecoes.py` com `NIDUM_URL`+`NIDUM_TOKEN` (GET) para a lista nominal do que existe só de um lado (o Davi executa com credencial).
 - 🟢 **`id vivo` de `BASE_CONHECIMENTO_ID`**: o default morto virou vazio; o id vivo mora no painel.
+- 🟢 **`nd-fonte` = 9 obras canônicas** (decisão do Davi): FONTE é curada e pequena; a base nova espelha o repo. Os **61** arquivos legado da "ND Fonte" de produção (só em produção, não no repo) **não migram** — ficam na coleção antiga. Catálogo para revisão no fim do projeto: `esteira/_docs/FASE1_CATALOGO_LEGADO_FONTE.md` (grupo ⭐ = possível doutrina a trazer para o repo).
 - 🟢 **Higiene (sem agir agora):** 4 comentários pré-existentes não-ASCII no `chatnd.py` (linhas ~298/329/411/1561) violam a convenção ASCII-only de `_nidum_tools/*.py`; antecedem a Fase 1. Corrigir no **próximo ciclo de manutenção do pipe**, não agora.
 
 ### Retenção de conversas (spec decidida 2026-07-02 — a IMPLEMENTAR)
