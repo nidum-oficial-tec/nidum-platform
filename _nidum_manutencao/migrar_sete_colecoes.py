@@ -218,6 +218,15 @@ def _emit(L, out, rc):
         print("\n[relatorio salvo em %s]" % out)
     except OSError as e:  # noqa: BLE001
         print("\n[nao consegui salvar o relatorio: %s]" % e)
+    # GitHub Action: espelha o relatorio no summary do job (invariante/contagens/confronto).
+    ss = os.environ.get("GITHUB_STEP_SUMMARY")
+    if ss:
+        try:
+            with open(ss, "a", encoding="utf-8") as f:
+                f.write("## Dry-run migracao 2->7 colecoes (GET-only)\n\n```\n"
+                        + texto + "\n```\n")
+        except OSError:
+            pass
     return rc
 
 
