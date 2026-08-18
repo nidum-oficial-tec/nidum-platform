@@ -153,7 +153,13 @@ def ler_producao(base, token):
 
 
 def _key(nome):
-    return os.path.basename(str(nome).replace("\\", "/")).strip().lower()
+    # Chave CANONICA de caminho. Producao guarda meta.name como a chave da esteira
+    # ("PASTA > sub > arquivo.md", separador " > "); o repo usa "/". Normaliza os dois
+    # para o MESMO caminho e compara por caminho (nao por basename - que colidiria nomes
+    # iguais em pastas diferentes e, pior, nem casava " > " com "/"). Um rename/move
+    # aparece dos DOIS lados (e o que queremos: nao sumir com nada).
+    s = str(nome).replace("\\", "/").replace(" > ", "/")
+    return s.strip().lower()
 
 
 def main():
