@@ -1,0 +1,347 @@
+{
+  "_fixtures_tipo": {
+    "_nota": "Contrato compartilhado: a esteira roda por (stem, pasta_origem, colecao); o pipe roda por meta_name (chave ' > ' = pasta_funcional + arquivo). Ambos devem dar 'tipo'. Um teste em CADA repo roda estas fixtures e falha se divergirem.",
+    "casos": [
+      {
+        "colecao": "FONTE",
+        "meta_name": "FONTE > Nidum Documento Fundador - v30.md",
+        "pasta_origem": "1 - Fonte",
+        "stem": "Nidum Documento Fundador - v30",
+        "tipo": "fonte_doutrina"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Informacoes_Ecossistemas_1_a_15_julho_2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia",
+        "stem": "ACA_Informacoes_Ecossistemas_1_a_15_julho_2026",
+        "tipo": "informativo"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Informativo_Executivo_Nidum_4Edicao.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia/Informativos Executivos Nidum",
+        "stem": "ACA_Informativo_Executivo_Nidum_4Edicao",
+        "tipo": "informativo"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Convergencia_10062026_v1.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia",
+        "stem": "ACA_Convergencia_10062026_v1",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACERVOS > Reunioes > Atas > GER_Semanal_27-07-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "GER_Semanal_27-07-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MUN > MUN_Reuniao_Estrategica_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Nidum Mundo",
+        "stem": "MUN_Reuniao_Estrategica_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACERVOS > Financas e Gestao de Projetos > 3.1 EGP > 3.1.3 Portfolio de Projetos > 1. Projeto Fazenda Fortaleza > 1.1 Cronogramas > FAZ_Cronograma_31.07_v3.md",
+        "pasta_origem": "3 - Acervos Institucionais/Financas e Gestao de Projetos/3.1 EGP/3.1.3 Portfolio de Projetos/1. Projeto Fazenda Fortaleza/1.1 Cronogramas",
+        "stem": "FAZ_Cronograma_31.07_v3",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_BrandbookNidum_10072026_V1.md",
+        "pasta_origem": "3 - Acervos Institucionais/Marketing",
+        "stem": "MKT_BrandbookNidum_10072026_V1",
+        "tipo": "registro"
+      },
+      {
+        "_grupo": "C: atas de decisao nomeadas (sigla-routed, pf SEM 'atas' -> ata pelo NOME estreito)",
+        "colecao": "ACERVOS",
+        "meta_name": "BRA > BRA_ResumoReuniaoCoautores_20072026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "BRA_ResumoReuniaoCoautores_20072026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_Ata Dossie parte 3_11-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_Ata Dossie parte 3_11-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_ata nucleo de captacao_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_ata nucleo de captacao_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "_grupo": "C NEGATIVOS: 'plataforma' NAO e ata; docs por-conteudo -> registro (o estreito nao alarga)",
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_Discussao de Narrativa da Metodologia_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "MKT_Discussao de Narrativa da Metodologia_10-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_Alinhamento de time_03-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_Alinhamento de time_03-08-2026",
+        "tipo": "registro"
+      }
+    ]
+  },
+  "_tipo_regras": {
+    "_nota": "FONTE UNICA das regras de TIPO. converter.py (esteira) e o pipe (Fase 3) derivam DAQUI. Casamento com fold de acento. informativo/ata pelo NOME; ata tambem quando um SEGMENTO de pasta == 'atas'; senao registro; colecao FONTE = fonte_doutrina.",
+    "ata_nome": [
+      "_convergencia",
+      "atadereuniao",
+      "_reuniao",
+      "_conversa",
+      "_semanal",
+      "resumoreuniao"
+    ],
+    "ata_palavra": [
+      "ata"
+    ],
+    "ata_pasta_segmento": "atas",
+    "ata_prefixo": [
+      "ata_",
+      "ger_",
+      "cte_",
+      "ct_",
+      "cc_",
+      "ce_"
+    ],
+    "informativo_nome": [
+      "_informativo_executivo",
+      "_informacoes_ecossistemas"
+    ]
+  },
+  "academia": {
+    "apelidos": [
+      "academia"
+    ],
+    "pastas": [
+      "aca"
+    ],
+    "siglas": [
+      "ACA"
+    ]
+  },
+  "comunidades_vivas": {
+    "apelidos": [
+      "comunidades vivas",
+      "londrina"
+    ],
+    "pastas": [
+      "acervos/produtos/comunidades vivas - londrina",
+      "cvi"
+    ],
+    "siglas": [
+      "CVI"
+    ]
+  },
+  "fazenda": {
+    "apelidos": [
+      "fazenda",
+      "fazenda fortaleza",
+      "fazenda-ancora",
+      "fazendas vivas"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza",
+      "fan"
+    ],
+    "siglas": [
+      "FAN"
+    ]
+  },
+  "financeiro": {
+    "apelidos": [
+      "EGP",
+      "PGP",
+      "financas",
+      "financeiro",
+      "gestao de projetos",
+      "portfolio"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos"
+    ],
+    "siglas": [
+      "FIN"
+    ]
+  },
+  "fornecedores": {
+    "apelidos": [
+      "due diligence de parceiros",
+      "fornecedor",
+      "fornecedores"
+    ],
+    "pastas": [
+      "acervos/suprimentos e fornecedores/fornecedores"
+    ],
+    "siglas": []
+  },
+  "governanca_conselhos": {
+    "apelidos": [
+      "comite executivo",
+      "comite tecnico",
+      "conselho curador"
+    ],
+    "pastas": [],
+    "siglas": [
+      "CC",
+      "CE",
+      "CT"
+    ]
+  },
+  "juridico": {
+    "apelidos": [
+      "governanca juridica",
+      "juridico"
+    ],
+    "pastas": [
+      "jur"
+    ],
+    "siglas": [
+      "JUR"
+    ]
+  },
+  "marketing": {
+    "apelidos": [
+      "marketing"
+    ],
+    "pastas": [
+      "mkt"
+    ],
+    "siglas": [
+      "MKT"
+    ]
+  },
+  "nidum_brasil": {
+    "apelidos": [
+      "brasil",
+      "nidum brasil"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/2. projeto mvp ipanema",
+      "bra"
+    ],
+    "siglas": [
+      "BRA"
+    ]
+  },
+  "nidum_mundo": {
+    "apelidos": [
+      "mundo",
+      "nidum mundo"
+    ],
+    "pastas": [
+      "acervos/produtos/nidum mundo",
+      "mun"
+    ],
+    "siglas": [
+      "MUN"
+    ]
+  },
+  "operacoes": {
+    "apelidos": [
+      "operacoes"
+    ],
+    "pastas": [
+      "ope"
+    ],
+    "siglas": [
+      "OPE"
+    ]
+  },
+  "pessoas_cadastros": {
+    "apelidos": [
+      "cadastro",
+      "facilitador",
+      "pessoas",
+      "quadro de pessoas",
+      "quem e"
+    ],
+    "pastas": [
+      "acervos/tecnologia/ninho de agentes/chico/1 - cadastros"
+    ],
+    "siglas": []
+  },
+  "plataforma_tecnologica": {
+    "apelidos": [
+      "plataforma",
+      "plataforma tecnologica",
+      "tecnologia"
+    ],
+    "pastas": [
+      "acervos/tecnologia",
+      "tec"
+    ],
+    "siglas": [
+      "TEC"
+    ]
+  },
+  "plataformas_regionais": {
+    "apelidos": [
+      "df",
+      "eua",
+      "europa",
+      "plataformas regionais",
+      "pr",
+      "regional",
+      "rs",
+      "sc",
+      "sp"
+    ],
+    "pastas": [],
+    "siglas": []
+  },
+  "produtos": {
+    "apelidos": [
+      "produtos"
+    ],
+    "pastas": [
+      "acervos/produtos"
+    ],
+    "siglas": [
+      "PROD"
+    ]
+  },
+  "regulacao_governanca": {
+    "apelidos": [
+      "governanca",
+      "regulacao"
+    ],
+    "pastas": [],
+    "siglas": [
+      "REG"
+    ]
+  },
+  "sustentabilidade": {
+    "apelidos": [
+      "sustentabilidade"
+    ],
+    "pastas": [
+      "sus"
+    ],
+    "siglas": [
+      "SUS"
+    ]
+  }
+}

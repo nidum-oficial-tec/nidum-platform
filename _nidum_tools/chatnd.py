@@ -1,9 +1,107 @@
 """
 title: ChatND
 author: Nidum
-version: 1.60.0
+version: 1.64.0
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.64.0:
+    - MAPA_COLECOES (Fase 1): valve nova (json papel->id das 7 colecoes novas; VAZIA por
+      default = comportamento atual). Helpers _parse_mapa_colecoes/_colecoes_para_busca.
+      Quando preenchida, _buscar_sources consulta SOMENTE as colecoes novas SELECIONADAS
+      pela heuristica (conceitual->fonte+normas; temporal/reuniao->atas+projetos; senao as
+      7); as 2 antigas ficam so em BASE_CONHECIMENTO_ID para ROLLBACK, FORA do conjunto
+      consultado (senao cada arquivo duplica e come o top-k). Com MAPA ativo a cota FONTE/
+      ACERVOS e ignorada (era conceito de 2 colecoes).
+    - REDE DE SEGURANCA: 0 trechos nas colecoes selecionadas -> reexecuta em TODAS as novas
+      (marca no log). Custo zero no caso normal (so dispara no vazio).
+    - BASE_CONHECIMENTO_ID: default morto (id de colecao aposentada) trocado por VAZIO (o id
+      vivo mora no banco/painel; default so vale na 1a carga). [id vivo: ver painel]
+    - DORMENTE em producao ate a valve ser preenchida (mesmo espirito do DIAL OFF). NAO
+      publicar: embarca no ciclo unico da Fase 1. Testes: teste_mapa_colecoes.py (helpers
+      puros) + 15 testes do pipe verdes.
+    - ETIQUETAS no contexto injetado (entrega C): _etiquetas_trecho derivada do nome do
+      arquivo -> [PROCEDENCIA EXTERNA] (IPPUL/nd-externo: nao citar terceiro como Nidum),
+      [STATUS: RASCUNHO] (v31), [TIPO: convergencia]. Best-effort, nunca degrada.
+    - PENDENTE (registrado): teste de integracao da rede mockando query_collection.
+  1.63.2:
+    - FATIA EMBUTIDA sincronizada com a do disco (correcao prevista antes da Fase 1). O
+      literal _FATIA_FASE3 (a que o pipe usa em PRODUCAO) tinha DRIFTADO da fatia gerada
+      pela esteira (fatia_assunto_pipe.json): 8 fixtures e SEM 'ata_palavra'/'resumoreuniao';
+      agora 14 fixtures + 'ata_palavra' + 'resumoreuniao'. Copiado da fatia gerada (NAO
+      editado a mao). Regras de TIPO intactas: cte_/ct_/cc_/ce_/ger_/ata_ seguem em
+      ata_prefixo (cte_ e ata de comite, NAO contrato). Dial OFF -> ZERO mudanca de resposta.
+    - GUARDA DE DRIFT no teste_tipo_contrato_pipe.py: passa a exigir _FATIA_FASE3 == fatia
+      do disco. Fecha o ponto cego que deixava o drift passar calado (o teste so exercitava
+      a fatia do disco, nunca a embutida). 15/15 testes do pipe OK.
+    - NAO publicar isolado: embarca no publish da Fase 1 (2->6 colecoes). Ate esse publish,
+      PRODUCAO roda a fatia embutida ANTIGA. Doc de producao (HTML/03/04) atualiza no publish.
+  1.63.1:
+    - MOSTRAR_ROTA agora ADMIN-GATED (mesmo padrao do DEBUG_TRECHOS). Era a unica saida de
+      bastidor que, se LIGADA, respingava no usuario final: emitia o status 'ChatND
+      encaminhou para: X' para qualquer role. Continua OFF por default e segue evento
+      'status' (nunca chunk de conteudo - o stream da resposta ja era intocado); a mudanca e
+      que, mesmo ON, so o admin ve. Fecha a auditoria de vazamento de diagnostico com o dial
+      (1.63.0) ligado em producao: nos defaults, o usuario final nao recebe NENHUM diagnostico.
+  1.63.0:
+    - COTA POR-COLECAO no RETRIEVAL (a peca que faltava do desenho da Fase 3, achada no
+      teste vivo do D10). A busca GLOBAL deixava a FONTE (scores altos) INUNDAR o pool
+      (~41/48 no D10) e espremer o ACERVOS - o FAZ_Cronograma nem chegava aos recuperados;
+      o dial so reordena 'sources', entao nao adiantava. Agora, quando o dial esta EFETIVO,
+      cada colecao e buscada SEPARADAMENTE (query_collection por id): ACERVOS ganha vagas
+      GARANTIDAS (DIAL_COTA_ACERVOS=40) e a FONTE fica minoria (DIAL_COTA_FONTE=12). E a
+      'FONTE minoria garantida' no nivel do RETRIEVAL, nao so do rerank. Fora do dial, a
+      busca global (atual) segue intacta. Diagnostico embutido: buscar ACERVOS separado
+      isola se o cronograma aparece no top-40 (era inundacao) ou nao (embedding fraco).
+    - CLASSIFICADOR '| conceitual': EXCECAO calibrada no teste vivo - 'o que mudou/evoluiu
+      entre X e Y' (ex.: v29->v30) NAO e conceitual (pede o registro concreto da mudanca,
+      ex.: Quadro de Pessoas), senao a FONTE domina e enterra o operacional. Ver o D2.
+  1.62.0:
+    - DIAL DE RANKEAMENTO (Fase 3). Nova valve DIAL_FASE3 (default OFF): quando ON,
+      reordena os TRECHOS recuperados pelo metadado POR-TRECHO derivado de meta['name']
+      (a chave da colecao = caminho do repo com ' > ' = pasta_funcional + arquivo) - NAO
+      do corpo (o cabecalho <!-- --> so existe no 1o chunk). Faixas: ACERVOS que casa o
+      ASSUNTO da pergunta primeiro; informativo cross-cutting (eixo-tipo); FONTE como
+      ancora/minoria (domina so em pergunta conceitual); demais ACERVOS. Recencia por
+      tipo (informativo/registro desempatam por data; FONTE atemporal). PRINCIPIO:
+      REFORCA nunca FILTRA, EXPANDE nunca ENCOLHE - nenhum trecho e removido. Best-effort:
+      falha do dial preserva a ordem original, a resposta NUNCA degrada.
+    - Regras de tipo/assunto vem da FATIA embutida (_FATIA_FASE3, ASCII), gerada do mapa
+      canonico UNICO da esteira (mapa_assuntos.json). Guarda de drift: teste_tipo_contrato_
+      pipe.py roda as MESMAS fixtures que a esteira (teste_tipo_contrato.py) - falha se
+      divergirem. Funcoes: _classificar_trecho/_assuntos_da_pergunta/_selecionar_e_ordenar.
+    - TESTES: teste_fase3.py (9 casos-invariante: ancora FONTE, expandir-nunca-encolher,
+      boost assunto/tipo, recencia por-tipo, diversidade, trava conceitual, multi-assunto);
+      teste_tipo_contrato_pipe.py (contrato cross-repo); demo_dial_d8_d9_d10.py (antes/
+      depois: D8 #4->#1, D9 nao regride, D10 cronograma acima da FONTE conceitual).
+    - CLASSIFICADOR: novo marcador '| conceitual' (mesmo mecanismo do '| triade'/'| recente':
+      'x' in saida). O JUIZ decide se a pergunta 'documentos' e DEFINICIONAL/DOUTRINARIA
+      (FONTE domina no dial) vs OPERACIONAL - juiz > regex, e o fiel da balanca do dial
+      (se marcar conceitual como operacional, a FONTE desce e D1/D3/D4/D5/D7 regridem; por
+      isso a decisao e do LLM com contexto, nao de palavra-chave). O pipe le e passa a
+      _contexto_documento -> dial; heuristica 'nao nomeia assunto' fica so como rede se o
+      sinal faltar. HIPOTESE a validar na base viva (regra do classificador) - valve OFF.
+    - UserValves (DIAL_FASE3, DEBUG_TRECHOS): cada coautor liga na PROPRIA sessao. Efetivo
+      = valve GLOBAL (Admin) OR UserValve. Assim o revisor MEDE o dial + ve os trechos na
+      sua sessao com a global OFF - sem respingar em producao. A global segue o interruptor
+      de producao (ligar so apos o teste vivo).
+    - NAO PUBLICAR sem revisao. Valve OFF por padrao; ligar so apos o Davi/revisor validar.
+  1.61.0:
+    - OBSERVABILIDADE DE RANKING (Fase 0 do trabalho de rankeamento). Nova valve
+      DEBUG_TRECHOS (default OFF): quando ON, o pipe REGISTRA no log a lista de trechos
+      que a busca retornou, na ORDEM do reranker, com a NOTA de cada um (metadata.score,
+      ou a distancia como fallback), o tamanho em chars, a fonte e a pasta. Se quem
+      pergunta for ADMIN, tambem EXIBE o mesmo relatorio via status (evento a jusante -
+      NAO toca no stream da resposta; prioridade STREAM INTOCADO preservada). Best-effort:
+      try/except em volta do emit, a resposta nunca degrada se a observabilidade falhar.
+    - POR QUE: sem ver QUAIS trechos entraram e com que nota, nao da para avaliar nenhuma
+      mudanca de ranking (a resposta cita a origem, mas nao a selecao nem o score). E a
+      base de medicao das fases seguintes (corte por relevancia, planilhas, metadados).
+    - COMO ACENDER: Admin -> Functions -> ChatND -> Valves -> DEBUG_TRECHOS = on. Como a
+      valve e PERSISTIDA no banco, o default OFF do codigo so vale na primeira carga.
+    - Fiacao: _contexto_documento ganha o parametro emitter (default None, retrocompativel);
+      a rota documentos passa __event_emitter__. Funcao pura _relatorio_trechos monta o texto.
+    - TESTE (teste_debug_trechos.py): exercita _relatorio_trechos (PURA) - ordem preservada,
+      nota formatada, fallback para distancia, e o caso de busca vazia. Nao toca na base.
   1.60.0:
     - SAIDA DE VOZ robusta (o player nao aparecia porque o SAVE demorava ~62s e o cliente
       ja fechava o stream). Tres pecas: (1) KEEPALIVE - durante sintese+save, emite um chunk
@@ -1236,6 +1334,21 @@ CLASSIFICADOR = (
     "podem interagir para gerar regeneracao num ecossistema'), acrescente ' | "
     "triade' APOS a palavra-chave. Para pedidos de INVENTARIO, DEFINICAO ou FATO "
     "(ex.: 'quais os ecossistemas da Nidum'), NAO acrescente.\n"
+    "MARCADOR CONCEITUAL (conceitual) - se a categoria for 'documentos' E a pergunta for "
+    "DEFINICIONAL/DOUTRINARIA (o que SIGNIFICA um conceito, principio, termo ou valor da "
+    "Nidum; a filosofia/visao fundadora; 'o que e X', 'o que significa Y', 'qual o conceito "
+    "de Z', 'em que a Nidum acredita') - em vez de OPERACIONAL (estado de um projeto, "
+    "cronograma, quem/quando, o que foi decidido numa reuniao, atividade recente de um "
+    "ecossistema), acrescente ' | conceitual' APOS a palavra-chave. Ex.: 'documentos | "
+    "conceitual' ('o que e intencao reta?', 'o que e uma empresa viva?', 'o que e a "
+    "Nidum?'); 'documentos' ('como esta o cronograma da Fazenda?', 'o que foi decidido na "
+    "convergencia da Academia?'). Vale MESMO que a pergunta nomeie um ecossistema, se o "
+    "que se pede e o CONCEITO e nao o estado ('qual a filosofia da Academia?' -> "
+    "conceitual). EXCECAO: pergunta sobre o que MUDOU/EVOLUIU entre versoes ou periodos "
+    "('o que mudou da v29 para a v30?', 'o que evoluiu de X para Y?') NAO e conceitual - "
+    "ela pede o REGISTRO CONCRETO da mudanca (movimentacoes, decisoes, quadro de pessoas), "
+    "nao a definicao de um conceito; NAO marque. NA DUVIDA, NAO marque - o operacional e o "
+    "padrao seguro.\n"
     "MARCADOR DE RECENCIA (recente) - se a categoria for 'geral' E a pergunta for sobre "
     "o ESTADO ATUAL do mundo (cotacao/preco de hoje, placar de ontem, noticia recente, "
     "'ultimo/atual/agora/quem ganhou/quanto esta/quem e hoje'), acrescente ' | recente' "
@@ -1244,7 +1357,8 @@ CLASSIFICADOR = (
     "busca priorizar o novo (barato); marcar a menos entrega dado velho como atual (a dor). "
     "Exemplos: 'geral | recente' (cotacao do dolar hoje), 'geral' (quem foi Getulio "
     "Vargas).\n"
-    "Exemplos validos: 'documentos | triade', 'documentos', 'geral | recente', 'geral'."
+    "Exemplos validos: 'documentos | triade', 'documentos | conceitual', 'documentos', "
+    "'geral | recente', 'geral'."
 )
 
 GERADOR = (
@@ -2987,6 +3101,22 @@ def _pasta_do_doc(doc):
     return re.sub(r"^\s*\d+\s*-\s*", "", m.group(1).strip())
 
 
+def _etiquetas_trecho(fonte):
+    # ETIQUETAS (Fase 1, entrega C). Derivadas do NOME do arquivo (meta['name']); entram no
+    # contexto injetado para o modelo NAO tratar terceiro como posicao da Nidum nem rascunho
+    # como vigente. ASCII, best-effort (nome ausente -> sem etiqueta; nunca degrada).
+    f = _f3_fold(str(fonte or "")).lower()
+    et = []
+    if "ippul" in f or "nd-externo" in f or " > externo" in f:
+        et.append("[PROCEDENCIA EXTERNA: documento publico de terceiro (ex.: lei municipal) "
+                  "- NAO citar como posicao ou decisao da Nidum]")
+    if "rascunho" in f or "v31" in f:
+        et.append("[STATUS: RASCUNHO nao publicado - nao tratar como versao vigente]")
+    if "convergencia" in f:
+        et.append("[TIPO: convergencia (ata de decisao)]")
+    return et
+
+
 def _montar_contexto(sources):
     blocos = []
     for src in sources or []:
@@ -2998,8 +3128,667 @@ def _montar_contexto(sources):
             pasta = _pasta_do_doc(str(doc))
             rotulo = str(fonte) + (" | pasta: " + pasta if pasta else "")
             if doc:
-                blocos.append("--- Fonte: " + rotulo + " ---\n" + str(doc))
+                cabec = "--- Fonte: " + rotulo + " ---"
+                et = _etiquetas_trecho(fonte)
+                if et:
+                    cabec += "\n" + "\n".join(et)
+                blocos.append(cabec + "\n" + str(doc))
     return "\n\n".join(blocos)
+
+
+def _relatorio_trechos(sources):
+    # OBSERVABILIDADE (valve DEBUG_TRECHOS). Descreve os trechos que a busca retornou,
+    # na ORDEM em que o reranker os colocou, com a NOTA de cada um. Sem isto nao da
+    # para avaliar mudanca de ranking: a resposta cita a origem, mas nao QUAIS trechos
+    # entraram nem com que nota (o corte por RELEVANCE_THRESHOLD acontece antes e nao
+    # deixa rastro). PURO: le 'sources', nao altera nada; nao faz rede.
+    # A nota vem de metadata['score'] (o cross-encoder grava ali); se faltar, cai para
+    # a distancia (distances[i]) como aproximacao - o rotulo diz qual dos dois e.
+    linhas = []
+    n = 0
+    for src in sources or []:
+        docs = src.get("document") or []
+        metas = src.get("metadata") or []
+        dists = src.get("distances") or []
+        for i, doc in enumerate(docs):
+            n += 1
+            meta = metas[i] if i < len(metas) else {}
+            fonte = (meta or {}).get("name") or (meta or {}).get("source") or "documento"
+            pasta = _pasta_do_doc(str(doc))
+            score = (meta or {}).get("score")
+            origem_nota = "score"
+            if score is None and i < len(dists):
+                score = dists[i]
+                origem_nota = "dist"
+            try:
+                nota_txt = origem_nota + "=" + ("%.4f" % float(score))
+            except (TypeError, ValueError):
+                nota_txt = "nota=n/d"
+            corpo = re.sub(r"\s+", " ", str(doc)).strip()
+            linhas.append(
+                "%2d. %s | chars=%d | fonte=%s%s | %s"
+                % (n, nota_txt, len(str(doc)), str(fonte),
+                   (" | pasta: " + pasta if pasta else ""), corpo[:120])
+            )
+    if not linhas:
+        return "DEBUG_TRECHOS: a busca retornou ZERO trechos (RAG vazio)."
+    cab = "DEBUG_TRECHOS: %d trecho(s) recuperado(s), ordem do reranker:" % len(linhas)
+    return cab + "\n" + "\n".join(linhas)
+
+
+# ==== FASE 3: DIAL DE RANKEAMENTO ================================================
+# Le o metadado POR-TRECHO de meta['name'] (a chave da colecao = caminho do repo com
+# ' > ' = pasta_funcional + arquivo), NAO do corpo (o cabecalho <!-- --> so existe no
+# 1o chunk). Principio: REFORCAR nunca FILTRAR, EXPANDIR nunca ENCOLHER - a saida contem
+# TODOS os trechos de entrada, so REORDENADOS. As regras de tipo/assunto vem do 'mapa'
+# (a fatia embutida em runtime; o teste_fase3.py passa o seu proprio MAPA). O contrato de
+# fixtures (teste_fase3 aqui; teste_tipo_contrato na esteira) quebra se os dois divergirem.
+def _f3_fold(s):
+    s = unicodedata.normalize("NFKD", s or "")
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
+def _f3_partes_nome(nome):
+    # meta['name'] = "TOPO > ... > arquivo.md" -> (stem, pasta_funcional).
+    partes = [p.strip() for p in (nome or "").split(">") if p.strip()]
+    arq = partes[-1] if partes else ""
+    stem = arq[:-3] if arq.lower().endswith(".md") else arq
+    return stem, "/".join(partes[:-1])
+
+
+def _f3_colecao(nome):
+    top = (nome or "").split(">", 1)[0].strip()
+    return "FONTE" if top.upper() == "FONTE" else "ACERVOS"
+
+
+def _f3_regras_tipo(mapa):
+    # Aceita o canonico (_tipo_regras) OU o tipos_de_fonte (fixture do teste_fase3).
+    r = mapa.get("_tipo_regras")
+    if r:
+        return (
+            [x.lower() for x in r.get("informativo_nome", [])],
+            [x.lower() for x in r.get("ata_nome", [])],
+            tuple(x.lower() for x in r.get("ata_prefixo", [])),
+            (r.get("ata_pasta_segmento") or "atas").lower(),
+            [x.lower() for x in r.get("ata_palavra", [])],
+        )
+    tf = mapa.get("tipos_de_fonte") or {}
+    info = [x.lower() for x in (tf.get("informativo", {}).get("deteccao_nome") or [])]
+    ata = [x.lower() for x in (tf.get("ata", {}).get("deteccao_nome") or [])]
+    return info, ata, tuple(), "atas", []
+
+
+def _f3_tipo(nome, mapa):
+    if _f3_colecao(nome) == "FONTE":
+        return "fonte_doutrina"
+    stem, pf = _f3_partes_nome(nome)
+    s = _f3_fold(stem)
+    info_pats, ata_pats, ata_prefixos, ata_seg, ata_palavras = _f3_regras_tipo(mapa)
+    if any(p in s for p in info_pats):
+        return "informativo"
+    segmentos = [_f3_fold(x) for x in pf.split("/")]
+    if ata_seg in segmentos:
+        return "ata"
+    # ata como PALAVRA (fronteira): pega 'Ata' isolado, nao 'plataforma'. Espelha o
+    # _tem_palavra do converter (esteira); as fixtures garantem que nao divergem.
+    palavra = any(re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z])", s)
+                  for w in ata_palavras)
+    if ((ata_prefixos and s.startswith(ata_prefixos)) or any(p in s for p in ata_pats)
+            or palavra):
+        return "ata"
+    return "registro"
+
+
+def _f3_assuntos_dict(mapa):
+    # Aceita os DOIS formatos: {'assuntos': {...}} (MAPA do teste_fase3) OU os assuntos
+    # no TOPO (a fatia embutida, onde as chaves '_...' sao metadados).
+    a = mapa.get("assuntos")
+    if isinstance(a, dict):
+        return a
+    return {k: v for k, v in mapa.items()
+            if not k.startswith("_") and isinstance(v, dict)
+            and ("apelidos" in v or "siglas" in v or "pastas" in v)}
+
+
+def _f3_pastas_disc(mapa):
+    # {pasta_folded: assunto} para pastas listadas por UM so assunto (exclui as
+    # COMPARTILHADAS, tipo Reunioes/Atas - senao toda ata geral herdaria todo assunto).
+    cont, dono = {}, {}
+    for chave, info in _f3_assuntos_dict(mapa).items():
+        if chave.startswith("_"):
+            continue
+        for p in (info.get("pastas") or []):
+            if not p or "[" in p or "(" in p:
+                continue
+            pn = _f3_fold(p).strip("/")
+            if pn:
+                cont[pn] = cont.get(pn, 0) + 1
+                dono[pn] = chave
+    return {pn: dono[pn] for pn, c in cont.items() if c == 1}
+
+
+def _f3_assuntos(nome, mapa):
+    # assunto do TRECHO: sigla do arquivo U pasta DISCRIMINATIVA (do caminho em nome).
+    stem, pf = _f3_partes_nome(nome)
+    sig = stem.split("_", 1)[0] if "_" in stem else stem
+    pfn = _f3_fold(pf).strip("/")
+    achados = set()
+    for chave, info in _f3_assuntos_dict(mapa).items():
+        if chave.startswith("_"):
+            continue
+        if sig and sig in (info.get("siglas") or []):
+            achados.add(chave)
+    for pn, chave in _f3_pastas_disc(mapa).items():
+        if pfn and (pfn == pn or pfn.startswith(pn + "/")):
+            achados.add(chave)
+    return achados
+
+
+def _f3_data(corpo):
+    m = re.search(r"\bmodificado:\s*([^|>]+?)\s*(?:\||-->)", corpo or "")
+    return m.group(1).strip() if m else ""
+
+
+def _classificar_trecho(nome, corpo, mapa):
+    # {colecao, assuntos:set, tipo, data}. Tudo de meta['name'] (=nome); data do corpo.
+    return {
+        "colecao": _f3_colecao(nome),
+        "assuntos": _f3_assuntos(nome, mapa),
+        "tipo": _f3_tipo(nome, mapa),
+        "data": _f3_data(corpo),
+    }
+
+
+def _assuntos_da_pergunta(texto, mapa):
+    # assunto(s) da PERGUNTA por apelido/sigla. Nao filtra - so informa o boost.
+    # FRONTEIRA DE PALAVRA: apelido de UMA palavra casa como TOKEN inteiro (igual sigla);
+    # apelido FRASE ('fazenda fortaleza', 'nidum mundo') casa por substring. Sem isto,
+    # apelidos curtos (pr/sp/rs/sc de plataformas_regionais) casariam DENTRO de palavras
+    # comuns ('pr' em 'projeto', 'sp' em 'resposta') e quase toda pergunta ganharia o
+    # assunto no boost - ruido que envenena a medicao.
+    t = _f3_fold(texto)
+    tokens = set(re.findall(r"[a-z0-9]+", t))
+    achados = set()
+    for chave, info in _f3_assuntos_dict(mapa).items():
+        if chave.startswith("_"):
+            continue
+        casou = False
+        for ap in (info.get("apelidos") or []):
+            apf = _f3_fold(ap)
+            if (" " in apf and apf in t) or (" " not in apf and apf in tokens):
+                casou = True
+                break
+        if not casou:
+            casou = any(_f3_fold(sg) in tokens for sg in (info.get("siglas") or []))
+        if casou:
+            achados.add(chave)
+    return achados
+
+
+def _selecionar_e_ordenar(sources, assuntos_pergunta, mapa, conceitual):
+    # O DIAL. Classifica cada trecho e REORDENA (nunca remove - expandir nunca encolher).
+    # Faixas (bucket, maior = mais acima):
+    #   conceitual: FONTE domina (3); ACERVOS depois (1).
+    #   normal: ACERVOS que casa o ASSUNTO da pergunta (4); informativo cross-cutting,
+    #           eixo-TIPO (3); FONTE ancora/minoria (2); demais ACERVOS (1).
+    # Dentro da faixa: score desc, e a RECENCIA como desempate por-tipo (FONTE atemporal
+    # -> sem data; informativo/registro/ata -> data mais nova primeiro).
+    itens = []
+    for src in sources or []:
+        docs = src.get("document") or []
+        metas = src.get("metadata") or []
+        dists = src.get("distances") or []
+        for i, doc in enumerate(docs):
+            meta = metas[i] if i < len(metas) else {}
+            nome = (meta or {}).get("name") or (meta or {}).get("source") or ""
+            sc = (meta or {}).get("score")
+            if sc is None and i < len(dists):
+                sc = dists[i]
+            try:
+                sc = float(sc)
+            except (TypeError, ValueError):
+                sc = 0.0
+            info = _classificar_trecho(nome, str(doc), mapa)
+            itens.append({
+                "nome": nome, "colecao": info["colecao"], "tipo": info["tipo"],
+                "assuntos": info["assuntos"], "score": sc, "data": info["data"],
+            })
+    ap = assuntos_pergunta or set()
+
+    def _bucket(it):
+        if conceitual:
+            return 3 if it["colecao"] == "FONTE" else 1
+        if it["colecao"] == "ACERVOS" and (it["assuntos"] & ap):
+            return 4
+        if it["tipo"] == "informativo":
+            return 3
+        if it["colecao"] == "FONTE":
+            return 2
+        return 1
+
+    def _rec(it):
+        return "" if it["tipo"] == "fonte_doutrina" else (it["data"] or "")
+
+    itens.sort(key=lambda it: (_bucket(it), it["score"], _rec(it)), reverse=True)
+    return itens
+
+
+# Fatia embutida (ASCII) = mapa_assuntos.json da esteira via gerar_fatia. O pipe nao
+# le arquivo em runtime; a guarda de drift e o teste_tipo_contrato_pipe.py (mesmas
+# fixtures do canonico). NUNCA editar a mao - regerar na esteira e copiar.
+_FATIA_FASE3 = json.loads('''
+{
+  "_fixtures_tipo": {
+    "_nota": "Contrato compartilhado: a esteira roda por (stem, pasta_origem, colecao); o pipe roda por meta_name (chave ' > ' = pasta_funcional + arquivo). Ambos devem dar 'tipo'. Um teste em CADA repo roda estas fixtures e falha se divergirem.",
+    "casos": [
+      {
+        "colecao": "FONTE",
+        "meta_name": "FONTE > Nidum Documento Fundador - v30.md",
+        "pasta_origem": "1 - Fonte",
+        "stem": "Nidum Documento Fundador - v30",
+        "tipo": "fonte_doutrina"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Informacoes_Ecossistemas_1_a_15_julho_2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia",
+        "stem": "ACA_Informacoes_Ecossistemas_1_a_15_julho_2026",
+        "tipo": "informativo"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Informativo_Executivo_Nidum_4Edicao.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia/Informativos Executivos Nidum",
+        "stem": "ACA_Informativo_Executivo_Nidum_4Edicao",
+        "tipo": "informativo"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACA > ACA_Convergencia_10062026_v1.md",
+        "pasta_origem": "3 - Acervos Institucionais/Academia",
+        "stem": "ACA_Convergencia_10062026_v1",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACERVOS > Reunioes > Atas > GER_Semanal_27-07-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "GER_Semanal_27-07-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MUN > MUN_Reuniao_Estrategica_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Nidum Mundo",
+        "stem": "MUN_Reuniao_Estrategica_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "ACERVOS > Financas e Gestao de Projetos > 3.1 EGP > 3.1.3 Portfolio de Projetos > 1. Projeto Fazenda Fortaleza > 1.1 Cronogramas > FAZ_Cronograma_31.07_v3.md",
+        "pasta_origem": "3 - Acervos Institucionais/Financas e Gestao de Projetos/3.1 EGP/3.1.3 Portfolio de Projetos/1. Projeto Fazenda Fortaleza/1.1 Cronogramas",
+        "stem": "FAZ_Cronograma_31.07_v3",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_BrandbookNidum_10072026_V1.md",
+        "pasta_origem": "3 - Acervos Institucionais/Marketing",
+        "stem": "MKT_BrandbookNidum_10072026_V1",
+        "tipo": "registro"
+      },
+      {
+        "_grupo": "C: atas de decisao nomeadas (sigla-routed, pf SEM 'atas' -> ata pelo NOME estreito)",
+        "colecao": "ACERVOS",
+        "meta_name": "BRA > BRA_ResumoReuniaoCoautores_20072026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "BRA_ResumoReuniaoCoautores_20072026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_Ata Dossie parte 3_11-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_Ata Dossie parte 3_11-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "PROD > PROD_ata nucleo de captacao_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "PROD_ata nucleo de captacao_10-08-2026",
+        "tipo": "ata"
+      },
+      {
+        "_grupo": "C NEGATIVOS: 'plataforma' NAO e ata; docs por-conteudo -> registro (o estreito nao alarga)",
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_AlinhamentoPlataformaInternaJuridico_05-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "MKT > MKT_Discussao de Narrativa da Metodologia_10-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "MKT_Discussao de Narrativa da Metodologia_10-08-2026",
+        "tipo": "registro"
+      },
+      {
+        "colecao": "ACERVOS",
+        "meta_name": "TEC > TEC_Alinhamento de time_03-08-2026.md",
+        "pasta_origem": "3 - Acervos Institucionais/Reunioes/Atas",
+        "stem": "TEC_Alinhamento de time_03-08-2026",
+        "tipo": "registro"
+      }
+    ]
+  },
+  "_tipo_regras": {
+    "_nota": "FONTE UNICA das regras de TIPO. converter.py (esteira) e o pipe (Fase 3) derivam DAQUI. Casamento com fold de acento. informativo/ata pelo NOME; ata tambem quando um SEGMENTO de pasta == 'atas'; senao registro; colecao FONTE = fonte_doutrina.",
+    "ata_nome": [
+      "_convergencia",
+      "atadereuniao",
+      "_reuniao",
+      "_conversa",
+      "_semanal",
+      "resumoreuniao"
+    ],
+    "ata_palavra": [
+      "ata"
+    ],
+    "ata_pasta_segmento": "atas",
+    "ata_prefixo": [
+      "ata_",
+      "ger_",
+      "cte_",
+      "ct_",
+      "cc_",
+      "ce_"
+    ],
+    "informativo_nome": [
+      "_informativo_executivo",
+      "_informacoes_ecossistemas"
+    ]
+  },
+  "academia": {
+    "apelidos": [
+      "academia"
+    ],
+    "pastas": [
+      "aca"
+    ],
+    "siglas": [
+      "ACA"
+    ]
+  },
+  "comunidades_vivas": {
+    "apelidos": [
+      "comunidades vivas",
+      "londrina"
+    ],
+    "pastas": [
+      "acervos/produtos/comunidades vivas - londrina",
+      "cvi"
+    ],
+    "siglas": [
+      "CVI"
+    ]
+  },
+  "fazenda": {
+    "apelidos": [
+      "fazenda",
+      "fazenda fortaleza",
+      "fazenda-ancora",
+      "fazendas vivas"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza",
+      "fan"
+    ],
+    "siglas": [
+      "FAN"
+    ]
+  },
+  "financeiro": {
+    "apelidos": [
+      "EGP",
+      "PGP",
+      "financas",
+      "financeiro",
+      "gestao de projetos",
+      "portfolio"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos"
+    ],
+    "siglas": [
+      "FIN"
+    ]
+  },
+  "fornecedores": {
+    "apelidos": [
+      "due diligence de parceiros",
+      "fornecedor",
+      "fornecedores"
+    ],
+    "pastas": [
+      "acervos/suprimentos e fornecedores/fornecedores"
+    ],
+    "siglas": []
+  },
+  "governanca_conselhos": {
+    "apelidos": [
+      "comite executivo",
+      "comite tecnico",
+      "conselho curador"
+    ],
+    "pastas": [],
+    "siglas": [
+      "CC",
+      "CE",
+      "CT"
+    ]
+  },
+  "juridico": {
+    "apelidos": [
+      "governanca juridica",
+      "juridico"
+    ],
+    "pastas": [
+      "jur"
+    ],
+    "siglas": [
+      "JUR"
+    ]
+  },
+  "marketing": {
+    "apelidos": [
+      "marketing"
+    ],
+    "pastas": [
+      "mkt"
+    ],
+    "siglas": [
+      "MKT"
+    ]
+  },
+  "nidum_brasil": {
+    "apelidos": [
+      "brasil",
+      "nidum brasil"
+    ],
+    "pastas": [
+      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/2. projeto mvp ipanema",
+      "bra"
+    ],
+    "siglas": [
+      "BRA"
+    ]
+  },
+  "nidum_mundo": {
+    "apelidos": [
+      "mundo",
+      "nidum mundo"
+    ],
+    "pastas": [
+      "acervos/produtos/nidum mundo",
+      "mun"
+    ],
+    "siglas": [
+      "MUN"
+    ]
+  },
+  "operacoes": {
+    "apelidos": [
+      "operacoes"
+    ],
+    "pastas": [
+      "ope"
+    ],
+    "siglas": [
+      "OPE"
+    ]
+  },
+  "pessoas_cadastros": {
+    "apelidos": [
+      "cadastro",
+      "facilitador",
+      "pessoas",
+      "quadro de pessoas",
+      "quem e"
+    ],
+    "pastas": [
+      "acervos/tecnologia/ninho de agentes/chico/1 - cadastros"
+    ],
+    "siglas": []
+  },
+  "plataforma_tecnologica": {
+    "apelidos": [
+      "plataforma",
+      "plataforma tecnologica",
+      "tecnologia"
+    ],
+    "pastas": [
+      "acervos/tecnologia",
+      "tec"
+    ],
+    "siglas": [
+      "TEC"
+    ]
+  },
+  "plataformas_regionais": {
+    "apelidos": [
+      "df",
+      "eua",
+      "europa",
+      "plataformas regionais",
+      "pr",
+      "regional",
+      "rs",
+      "sc",
+      "sp"
+    ],
+    "pastas": [],
+    "siglas": []
+  },
+  "produtos": {
+    "apelidos": [
+      "produtos"
+    ],
+    "pastas": [
+      "acervos/produtos"
+    ],
+    "siglas": [
+      "PROD"
+    ]
+  },
+  "regulacao_governanca": {
+    "apelidos": [
+      "governanca",
+      "regulacao"
+    ],
+    "pastas": [],
+    "siglas": [
+      "REG"
+    ]
+  },
+  "sustentabilidade": {
+    "apelidos": [
+      "sustentabilidade"
+    ],
+    "pastas": [
+      "sus"
+    ],
+    "siglas": [
+      "SUS"
+    ]
+  }
+}
+''')
+
+
+# ---- MAPA_COLECOES (Fase 1): selecao das colecoes novas por papel ----
+_PAPEIS_MAPA = ("atas", "projetos", "fonte", "normas", "marca", "contratos", "externo")
+
+
+def _parse_mapa_colecoes(raw):
+    """Valve MAPA_COLECOES (json papel->id). Vazio/invalido -> {} (fallback total)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    out = {}
+    for k, v in d.items():
+        if isinstance(k, str) and isinstance(v, str) and v.strip():
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def _colecoes_para_busca(mapa, conceitual, temporal):
+    """(selecionadas, todas) de ids. mapa vazio -> (None, None) = comportamento atual.
+    conceitual -> fonte+normas; temporal/reuniao -> atas+projetos; senao -> todas as 7.
+    Nunca devolve vazio quando ha mapa (cai em todas)."""
+    if not mapa:
+        return None, None
+    todas = [mapa[p] for p in _PAPEIS_MAPA if mapa.get(p)]
+    if conceitual:
+        papeis = ("fonte", "normas")
+    elif temporal:
+        papeis = ("atas", "projetos")
+    else:
+        papeis = _PAPEIS_MAPA
+    sel = [mapa[p] for p in papeis if mapa.get(p)]
+    return (sel or todas), todas
+
+
+def _f3_reordenar_sources(sources, ordenados):
+    # Reordena as listas paralelas de 'sources' na ordem do dial (por nome). NUNCA
+    # remove (expandir nunca encolher): quem nao veio do dial fica no fim, ordem original.
+    ordem = {}
+    for pos, it in enumerate(ordenados or []):
+        ordem.setdefault(it.get('nome'), pos)
+    novo = []
+    for src in sources or []:
+        docs = src.get('document') or []
+        metas = src.get('metadata') or []
+        dists = src.get('distances') or []
+        idx = list(range(len(docs)))
+        def _ch(i, metas=metas):
+            nome = (metas[i] or {}).get('name') if i < len(metas) else ''
+            return (ordem.get(nome, 10**6), i)
+        idx.sort(key=_ch)
+        novo.append({
+            'source': src.get('source'),
+            'document': [docs[i] for i in idx],
+            'metadata': [metas[i] for i in idx] if metas else [],
+            'distances': [dists[i] for i in idx] if dists else [],
+        })
+    return novo
 
 
 async def _tavily_buscar(api_key, query, *, max_results=3, search_depth="basic",
@@ -3290,9 +4079,11 @@ class Pipe:
         # lembrar de reanexar a tool, e e o clique que ninguem lembra.
         MODELO_GERAL: str = Field(default="nidum-10---dia-a-dia")
         MODELO_DOCUMENTOS: str = Field(default="nidum-10---documentos")
-        BASE_CONHECIMENTO_ID: str = Field(
-            default="f2c8a48c-59f5-4c93-bd5c-b3d9516d7451"
-        )
+        # Default VAZIO de proposito: o id vivo mora no banco (valve persistida) e no
+        # painel - o default so vale na 1a carga. O antigo default apontava para um id
+        # MORTO (colecao aposentada), que enganava instalacao nova e a doc. Vazio forca
+        # config consciente e nao aponta para nada inexistente. [id vivo: ver painel]
+        BASE_CONHECIMENTO_ID: str = Field(default="")
         # 0 = HERDA o Top K do Admin (cfg.TOP_K) - e o default. Qualquer valor > 0
         # SOBREPOE o Admin (override consciente). Antes o default 10 sobrepunha o
         # Admin em silencio: os demais parametros (hybrid, reranker, BM25, k_reranker,
@@ -3358,6 +4149,37 @@ class Pipe:
         TTS_MAX_PALAVRAS: int = Field(default=30)   # acima -> exige pedido numa PONTA
         TTS_RETER_DIAS: int = Field(default=30)          # politica de retencao (LGPD)
         MOSTRAR_ROTA: bool = Field(default=False)
+        # OBSERVABILIDADE DE RANKING (Fase 0). Default OFF. ON -> o pipe REGISTRA no log
+        # a lista de trechos que a busca retornou (ordem do reranker) com a NOTA de cada
+        # um; e, se quem pergunta for ADMIN, EXIBE o mesmo via status (evento a jusante,
+        # NAO toca no stream da resposta). Ferramenta de MEDICAO: sem ela nao da para
+        # avaliar mudanca de ranking. Best-effort - nunca degrada a resposta. Persistida
+        # no banco (o default OFF do codigo so vale na PRIMEIRA carga; para acender/apagar
+        # numa instalacao que ja salvou, use o painel).
+        DEBUG_TRECHOS: bool = Field(default=False)
+        # DIAL DE RANKEAMENTO (Fase 3). Default OFF. ON -> reordena os trechos recuperados
+        # pelo metadado por-trecho (colecao/tipo/assunto de meta['name']): cota FONTE
+        # (minoria/ancora; domina so em pergunta conceitual), boost por assunto+tipo,
+        # recencia por tipo, diversidade. REFORCA nunca FILTRA / EXPANDE nunca ENCOLHE
+        # (nenhum trecho e removido). Best-effort: falha do dial preserva a ordem original,
+        # a resposta NUNCA degrada. Persistida no banco.
+        DIAL_FASE3: bool = Field(default=False)
+        # COTA POR-COLECAO (Fase 3, so quando DIAL_FASE3 efetivo). A busca GLOBAL deixa a
+        # FONTE (scores altos) INUNDAR o pool e espremer o ACERVOS - o cronograma (D10) nem
+        # chega aos 48. Com a cota, cada colecao e buscada SEPARADAMENTE: ACERVOS ganha
+        # vagas GARANTIDAS e a FONTE fica minoria. E a "FONTE minoria garantida" no nivel
+        # do RETRIEVAL (o dial so reordena o que foi recuperado). 0 num dos dois = desliga a
+        # cota daquela colecao (cai no k global). Calibravel na medicao.
+        DIAL_COTA_ACERVOS: int = Field(default=40)
+        DIAL_COTA_FONTE: int = Field(default=12)
+        # MAPA_COLECOES (Fase 1). JSON papel->id das 7 colecoes novas:
+        # {"atas":"<id>","projetos":"<id>","fonte":"<id>","normas":"<id>","marca":"<id>",
+        #  "contratos":"<id>","externo":"<id>"}. VAZIO (default) = comportamento ATUAL
+        # (busca em BASE_CONHECIMENTO_ID). Preenchida: a busca consulta SOMENTE as colecoes
+        # novas selecionadas pela heuristica; as 2 antigas ficam so em BASE_CONHECIMENTO_ID
+        # para ROLLBACK - FORA do conjunto consultado (senao cada arquivo duplica e come o
+        # top-k). Persistida no banco: preencher/limpar pelo painel.
+        MAPA_COLECOES: str = Field(default="")
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
         # Antes era UMA valve (FUNDADORES_SEMPRE) ligando as duas coisas de uma vez, com
@@ -3425,6 +4247,14 @@ class Pipe:
         # tokens. A sonda mede se vale o peso; default OFF (snippet primeiro).
         WEB_RECENTE_RAW: bool = Field(default=False)
 
+    class UserValves(BaseModel):
+        # Valves POR-USUARIO (cada coautor liga na PROPRIA sessao, sem respingar em
+        # producao). O efetivo e OR com a valve global: ligar aqui afeta SO quem ligou;
+        # a global (Admin) segue como o interruptor de producao. Serve para MEDIR o dial
+        # (Fase 3) e ver os trechos (DEBUG) na sessao do revisor com a global OFF.
+        DIAL_FASE3: bool = Field(default=False)
+        DEBUG_TRECHOS: bool = Field(default=False)
+
     def __init__(self):
         self.valves = self.Valves()
         self._tool_cache = None
@@ -3476,7 +4306,8 @@ class Pipe:
         raw = self.valves.BASE_CONHECIMENTO_ID or ""
         return [b.strip() for b in re.split(r"[,\s]+", raw) if b.strip()]
 
-    async def _buscar_sources(self, request, user, texto, texto_atual=None):
+    async def _buscar_sources(self, request, user, texto, texto_atual=None, cota=None,
+                              conceitual=None):
         # NORMALIZACAO DE DATAS: a pergunta diz "13/07", o arquivo se chama
         # ..._13072026.md e o corpo diz "13 de julho de 2026" - o BM25 nao casa esses
         # tokens e o denso ignora datas (causa provada da Q14). Expande a data em todas
@@ -3514,7 +4345,15 @@ class Pipe:
         # vez e faz merge_and_sort_query_results(k) = corte global. Bonus: ele le TODO o
         # resto do Admin por dentro (hybrid, RERANKING_FUNCTION, TOP_K_RERANKER,
         # RELEVANCE_THRESHOLD, HYBRID_BM25_WEIGHT) - zero duplicacao de parametro.
-        bases = self._bases()
+        # MAPA_COLECOES (Fase 1): preenchida -> busca SO nas colecoes novas selecionadas
+        # (as 2 antigas ficam fora, so rollback). Vazia -> comportamento atual (BASE_...).
+        _temporal = (texto != _antes) or bool(re.search(
+            r"reuni|convergenc|\bata\b|encontro", (texto or "").lower()))
+        _mapa = _parse_mapa_colecoes(self.valves.MAPA_COLECOES)
+        _sel, _todas = _colecoes_para_busca(_mapa, bool(conceitual), _temporal)
+        if _sel is not None:
+            cota = None  # MAPA supersede a cota FONTE/ACERVOS (que e conceito de 2 colecoes)
+        bases = list(_sel) if _sel is not None else self._bases()
         if user:
             # query_collection NAO checa permissao (o get_sources_from_items checava).
             # Preserva o controle de acesso por usuario: so consulta o que ele pode ler.
@@ -3523,32 +4362,85 @@ class Pipe:
             log.warning("chatnd: nenhuma colecao de conhecimento acessivel a este usuario")
             return []
         cfg = request.app.state.config
-        resultado = await query_collection(
-            request,
-            collection_names=bases,
-            queries=[texto],
-            embedding_function=lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(
-                query, prefix=prefix, user=user
-            ),
-            k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K,
+        _ef = lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(  # noqa: E731
+            query, prefix=prefix, user=user
         )
-        # Adapta o retorno cru ({documents, metadatas, distances}) para o formato
-        # "sources" que _montar_contexto/_contexto_documento consomem.
-        docs = (resultado or {}).get("documents") or []
-        metas = (resultado or {}).get("metadatas") or []
-        if not docs or not docs[0]:
-            return []
-        src = {
-            "source": {"name": "Base institucional Nidum"},
-            "document": docs[0],
-            "metadata": (metas[0] if metas else []),
-        }
-        distancias = (resultado or {}).get("distances") or []
-        if distancias:
-            src["distances"] = distancias[0]
-        return [src]
 
-    async def _contexto_documento(self, request, user, texto, texto_atual=None):
+        # COTA POR-COLECAO (Fase 3): busca CADA colecao SEPARADAMENTE, com vaga propria -
+        # ACERVOS garantido, FONTE minoria. Sem isto, o corte global por score deixa a
+        # FONTE (scores altos) inundar o pool e o cronograma (D10) nem chega. cota =
+        # (k_fonte, k_acervos); 0 num deles cai no k global daquela colecao.
+        if cota:
+            k_fonte, k_acervos = cota
+            docs_all, metas_all, dists_all = [], [], []
+            for bid in bases:
+                lim_max = max(k_fonte or 0, k_acervos or 0, self.valves.TOP_K_DOCUMENTOS
+                              or cfg.TOP_K)
+                try:
+                    r = await query_collection(
+                        request, collection_names=[bid], queries=[texto],
+                        embedding_function=_ef, k=lim_max)
+                except Exception:
+                    log.exception("chatnd: cota - falha ao buscar colecao %s", bid)
+                    continue
+                d0 = ((r or {}).get("documents") or [[]])[0]
+                m0 = ((r or {}).get("metadatas") or [[]])[0]
+                di0 = ((r or {}).get("distances") or [[]])[0]
+                if not d0:
+                    continue
+                nome0 = ((m0[0] or {}).get("name") or "") if m0 else ""
+                eh_fonte = nome0.strip().upper().startswith("FONTE >")
+                lim = (k_fonte if eh_fonte else k_acervos) or lim_max
+                docs_all += d0[:lim]
+                metas_all += m0[:lim]
+                dists_all += (di0[:lim] if di0 else [])
+                log.info("chatnd: cota -> colecao %s (%s): %d trecho(s) de %d",
+                         bid, "FONTE" if eh_fonte else "ACERVOS", min(len(d0), lim), len(d0))
+            if not docs_all:
+                return []
+            src = {"source": {"name": "Base institucional Nidum"},
+                   "document": docs_all, "metadata": metas_all}
+            if dists_all:
+                src["distances"] = dists_all
+            return [src]
+
+        # Busca GLOBAL (corte de k por score, comparavel entre colecoes por cross-encoder).
+        # Encapsulada para a REDE DE SEGURANCA do MAPA reexecutar nas 7 sem duplicar codigo.
+        async def _consulta_global(bs):
+            r = await query_collection(
+                request, collection_names=bs, queries=[texto],
+                embedding_function=_ef, k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K)
+            d = (r or {}).get("documents") or []
+            m = (r or {}).get("metadatas") or []
+            if not d or not d[0]:
+                return []
+            s = {"source": {"name": "Base institucional Nidum"},
+                 "document": d[0], "metadata": (m[0] if m else [])}
+            di = (r or {}).get("distances") or []
+            if di:
+                s["distances"] = di[0]
+            return [s]
+
+        out = await _consulta_global(bases)
+        # REDE DE SEGURANCA (so com MAPA ativo): 0 trechos nas colecoes selecionadas ->
+        # reexecuta em TODAS as novas. Marca no log. Custo zero no caso normal (so no vazio).
+        if _sel is not None and not out and _todas and (set(_todas) - set(bases)):
+            bases2 = sorted(set(_todas))
+            if user:
+                bases2 = sorted(await filter_accessible_collections(set(bases2), user))
+            if bases2:
+                log.info("chatnd: MAPA rede de seguranca -> 0 nas selecionadas; "
+                         "reexecuta nas %d colecoes novas", len(bases2))
+                out = await _consulta_global(bases2)
+        return out
+
+    async def _contexto_documento(self, request, user, texto, texto_atual=None,
+                                  emitter=None, conceitual=None,
+                                  dial_on=None, debug_on=None):
+        # dial_on/debug_on = efetivo (global OR UserValve) calculado no chamador. Se None
+        # (chamada antiga), cai na valve global.
+        _dial = self.valves.DIAL_FASE3 if dial_on is None else dial_on
+        _debug = self.valves.DEBUG_TRECHOS if debug_on is None else debug_on
         # Recupera trechos (hybrid + reranker, config do Admin) e monta o contexto com
         # DUAS camadas: (1) o(s) documento(s) INTEIRO(S) mais bem ranqueados - evita
         # resposta fragmentada em "liste todos"; (2) os TRECHOS recuperados, que agora
@@ -3568,7 +4460,46 @@ class Pipe:
         #   3. PISO: fundadores que ainda nao entraram sao SEMPRE anexados ao
         #      final, cada um com ate FUNDADORES_MAX_CHARS (orcamento RESERVADO,
         #      para nao serem expulsos pelos ranqueados nem expulsa-los).
-        sources = await self._buscar_sources(request, user, texto, texto_atual)
+        # COTA por-colecao: so quando o dial esta EFETIVO (medicao/producao com dial ON).
+        # Garante vagas de ACERVOS no pool - senao o dial so reordena um pool ja inundado
+        # de FONTE (o cronograma do D10 nunca chega). Fora do dial, busca global (atual).
+        _cota = ((self.valves.DIAL_COTA_FONTE, self.valves.DIAL_COTA_ACERVOS)
+                 if _dial else None)
+        sources = await self._buscar_sources(request, user, texto, texto_atual, cota=_cota,
+                                             conceitual=conceitual)
+
+        # DIAL DE RANKEAMENTO (valve DIAL_FASE3). Reordena os trechos pelo metadado
+        # por-trecho (de meta['name']): cota FONTE, boost assunto+tipo, recencia, diver-
+        # sidade. REFORCA nunca FILTRA. Best-effort: qualquer falha preserva a ordem
+        # original (a resposta NUNCA degrada). Roda ANTES do DEBUG_TRECHOS para o log/
+        # status refletirem a ordem que o modelo vai ver.
+        if _dial:
+            try:
+                ap = _assuntos_da_pergunta(texto or "", _FATIA_FASE3)
+                # conceitual: o SINAL do classificador (marcador '| conceitual', juiz >
+                # regex) e o fiel da balanca - decide se a FONTE domina. Se o sinal nao
+                # veio (conceitual=None), cai na heuristica 'nao nomeia assunto' como rede.
+                eh_conceitual = conceitual if conceitual is not None else (not ap)
+                ordenados = _selecionar_e_ordenar(sources, ap, _FATIA_FASE3, eh_conceitual)
+                sources = _f3_reordenar_sources(sources, ordenados)
+                log.info("chatnd: dial Fase 3 aplicado (assuntos=%s, conceitual=%s)",
+                         sorted(ap) or "-", eh_conceitual)
+            except Exception:
+                log.exception("chatnd: dial Fase 3 falhou; ordem original preservada")
+
+        # OBSERVABILIDADE (valve DEBUG_TRECHOS). Best-effort e a JUSANTE do que importa:
+        # o log e a fonte duravel da medicao (o admin le no servidor); o status e so
+        # conveniencia para o admin no chat. Nunca degrada a resposta - qualquer falha
+        # aqui e engolida. Status NAO e chunk de conteudo: o stream da resposta fica
+        # intocado (prioridade da casa).
+        if _debug:
+            try:
+                rel = _relatorio_trechos(sources)
+                log.info("chatnd: %s", rel)
+                if emitter is not None and getattr(user, "role", "") == "admin":
+                    await self._emitir(emitter, rel)
+            except Exception:
+                log.exception("chatnd: falha ao montar/emitir DEBUG_TRECHOS")
 
         ordem = []
         for src in sources or []:
@@ -5100,7 +6031,10 @@ class Pipe:
             and categoria == "documentos"
         )
 
-        if self.valves.MOSTRAR_ROTA:
+        # ADMIN-GATE (mesmo padrao do DEBUG_TRECHOS): MOSTRAR_ROTA e observabilidade de
+        # bastidor. Mesmo LIGADA, so o admin ve o status da rota - o usuario final nunca
+        # recebe saida de diagnostico. E um evento 'status', nunca chunk de conteudo.
+        if self.valves.MOSTRAR_ROTA and getattr(user, "role", "") == "admin":
             await self._emitir(
                 __event_emitter__,
                 "ChatND encaminhou para: " + rotulo.get(categoria, categoria),
@@ -5320,9 +6254,18 @@ class Pipe:
         # Rota de documentos: injeta o contexto recuperado (RAG).
         if categoria == "documentos" and texto:
             consulta = _texto_de_busca(_msgs_rota, 3) or texto
+            # CONCEITUAL: marcador do CLASSIFICADOR (juiz > regex). O dial da Fase 3 usa
+            # isto para manter a FONTE no topo em pergunta definicional/doutrinaria.
+            conceitual = "conceitual" in saida
+            # UserValves: cada um liga o dial/debug na PROPRIA sessao. Efetivo = global
+            # OR do usuario -> o revisor mede com a global OFF, sem respingar em producao.
+            _uv = (__user__ or {}).get("valves")
+            dial_on = self.valves.DIAL_FASE3 or bool(getattr(_uv, "DIAL_FASE3", False))
+            debug_on = self.valves.DEBUG_TRECHOS or bool(getattr(_uv, "DEBUG_TRECHOS", False))
             try:
                 contexto = await self._contexto_documento(
-                    __request__, user, consulta, texto
+                    __request__, user, consulta, texto, emitter=__event_emitter__,
+                    conceitual=conceitual, dial_on=dial_on, debug_on=debug_on,
                 )
             except Exception:
                 log.exception(
