@@ -1,9 +1,20 @@
 """
 title: ChatND
 author: Nidum
-version: 1.64.0
+version: 1.64.1
 description: Roteador automatico. Classifica o pedido (gpt-5-mini) e encaminha para o modelo NIDUM adequado. Na rota de documentos faz RAG da base institucional. Na rota de arquivo, gera a estrutura com gpt-5.1 e chama a ferramenta gerador_de_arquivos_nidum (inclusive com imagens anexadas pelo usuario). Na rota de imagem, gera a imagem via Gemini (motor oculto). Audio anexado e transcrito (Whisper local) e vira o pedido, roteado como texto. O usuario nao escolhe o motor.
 changelog:
+  1.64.1:
+    - CORRECAO (bug pego no go-live): a heuristica de escolha de colecoes FILTRAVA por tema
+      (conceitual->fonte+normas; "encontro/reuniao/ata/convergencia"->atas+projetos). Uma
+      pergunta que citava "encontro" EXCLUIA a Fonte da busca -> nao recuperava documento da
+      Fonte (medido: "carta aos 60 ... encontro de Florianopolis" trazia a ata da festa, nao
+      a NIDUM_CARTA_AOS_60 que esta na Fonte). Viola o principio REFORCA-nunca-FILTRA.
+    - Agora, com MAPA_COLECOES ativa, busca em TODAS as 7 novas com VAGA por colecao
+      (k=MAPA_K_POR_COLECAO, default 8) e INTERCALA (round-robin): nenhuma colecao e excluida
+      (a Fonte sempre e buscada), nenhuma afoga as outras, e o topo de cada uma entra cedo no
+      orcamento. Removidos _colecoes_para_busca e a rede de seguranca (redundantes). Nova
+      valve MAPA_K_POR_COLECAO. MAPA vazia = comportamento atual (inalterado).
   1.64.0:
     - MAPA_COLECOES (Fase 1): valve nova (json papel->id das 7 colecoes novas; VAZIA por
       default = comportamento atual). Helpers _parse_mapa_colecoes/_colecoes_para_busca.
@@ -3749,23 +3760,6 @@ def _parse_mapa_colecoes(raw):
     return out
 
 
-def _colecoes_para_busca(mapa, conceitual, temporal):
-    """(selecionadas, todas) de ids. mapa vazio -> (None, None) = comportamento atual.
-    conceitual -> fonte+normas; temporal/reuniao -> atas+projetos; senao -> todas as 7.
-    Nunca devolve vazio quando ha mapa (cai em todas)."""
-    if not mapa:
-        return None, None
-    todas = [mapa[p] for p in _PAPEIS_MAPA if mapa.get(p)]
-    if conceitual:
-        papeis = ("fonte", "normas")
-    elif temporal:
-        papeis = ("atas", "projetos")
-    else:
-        papeis = _PAPEIS_MAPA
-    sel = [mapa[p] for p in papeis if mapa.get(p)]
-    return (sel or todas), todas
-
-
 def _f3_reordenar_sources(sources, ordenados):
     # Reordena as listas paralelas de 'sources' na ordem do dial (por nome). NUNCA
     # remove (expandir nunca encolher): quem nao veio do dial fica no fim, ordem original.
@@ -4180,6 +4174,10 @@ class Pipe:
         # para ROLLBACK - FORA do conjunto consultado (senao cada arquivo duplica e come o
         # top-k). Persistida no banco: preencher/limpar pelo painel.
         MAPA_COLECOES: str = Field(default="")
+        # Vagas de retrieval POR colecao quando MAPA_COLECOES ativa: cada uma das 7 novas e
+        # buscada separadamente com ate este k, e o merge intercala (round-robin). Garante que
+        # a Fonte nunca seja excluida nem afogue as demais. Default 8.
+        MAPA_K_POR_COLECAO: int = Field(default=8)
         TRIADE_ATIVA: bool = Field(default=True)
         # FUNDADORES - duas valves, dois comportamentos SEM RELACAO entre si (1.28.0).
         # Antes era UMA valve (FUNDADORES_SEMPRE) ligando as duas coisas de uma vez, com
@@ -4345,15 +4343,15 @@ class Pipe:
         # vez e faz merge_and_sort_query_results(k) = corte global. Bonus: ele le TODO o
         # resto do Admin por dentro (hybrid, RERANKING_FUNCTION, TOP_K_RERANKER,
         # RELEVANCE_THRESHOLD, HYBRID_BM25_WEIGHT) - zero duplicacao de parametro.
-        # MAPA_COLECOES (Fase 1): preenchida -> busca SO nas colecoes novas selecionadas
-        # (as 2 antigas ficam fora, so rollback). Vazia -> comportamento atual (BASE_...).
-        _temporal = (texto != _antes) or bool(re.search(
-            r"reuni|convergenc|\bata\b|encontro", (texto or "").lower()))
-        _mapa = _parse_mapa_colecoes(self.valves.MAPA_COLECOES)
-        _sel, _todas = _colecoes_para_busca(_mapa, bool(conceitual), _temporal)
-        if _sel is not None:
-            cota = None  # MAPA supersede a cota FONTE/ACERVOS (que e conceito de 2 colecoes)
-        bases = list(_sel) if _sel is not None else self._bases()
+        # MAPA_COLECOES (Fase 1): preenchida -> busca em TODAS as 7 colecoes novas (as 2
+        # antigas ficam fora, so rollback), com VAGA por colecao (abaixo). NUNCA filtra
+        # colecao por tema: uma pergunta que cita "encontro" NAO pode excluir a Fonte
+        # (principio REFORCA-nunca-FILTRA). Vazia -> comportamento atual (BASE_...).
+        _ids_mapa = list(dict.fromkeys(
+            _parse_mapa_colecoes(self.valves.MAPA_COLECOES).values()))
+        if _ids_mapa:
+            cota = None  # MAPA usa vaga-por-colecao propria (nao a cota FONTE/ACERVOS)
+        bases = list(_ids_mapa) if _ids_mapa else self._bases()
         if user:
             # query_collection NAO checa permissao (o get_sources_from_items checava).
             # Preserva o controle de acesso por usuario: so consulta o que ele pode ler.
@@ -4365,6 +4363,39 @@ class Pipe:
         _ef = lambda query, prefix: request.app.state.EMBEDDING_FUNCTION(  # noqa: E731
             query, prefix=prefix, user=user
         )
+
+        # MAPA_COLECOES: busca CADA colecao nova SEPARADAMENTE (vaga garantida, k_col cada)
+        # e INTERCALA (round-robin). Assim nenhuma colecao e excluida (a Fonte SEMPRE e
+        # buscada) nem AFOGA as outras, e o TOPO de cada uma entra cedo no orcamento (o melhor
+        # trecho da Fonte nao fica no fim). O reranker do Admin ja ordenou dentro de cada
+        # colecao; o dial (se ligado) reordena o merge por relevancia.
+        if _ids_mapa:
+            k_col = self.valves.MAPA_K_POR_COLECAO or 8
+            por_col = []
+            for bid in bases:
+                try:
+                    r = await query_collection(request, collection_names=[bid],
+                                               queries=[texto], embedding_function=_ef, k=k_col)
+                except Exception:
+                    log.exception("chatnd: MAPA - falha ao buscar colecao %s", bid)
+                    continue
+                d0 = ((r or {}).get("documents") or [[]])[0]
+                m0 = ((r or {}).get("metadatas") or [[]])[0]
+                di0 = ((r or {}).get("distances") or [[]])[0]
+                if d0:
+                    por_col.append((d0, m0, di0))
+                    log.info("chatnd: MAPA -> colecao %s: %d trecho(s)", bid, len(d0))
+            if not por_col:
+                return []
+            docs_all, metas_all, dists_all = [], [], []
+            for i in range(max(len(p[0]) for p in por_col)):
+                for d0, m0, di0 in por_col:
+                    if i < len(d0):
+                        docs_all.append(d0[i])
+                        metas_all.append(m0[i] if i < len(m0) else {})
+                        dists_all.append(di0[i] if i < len(di0) else 0.0)
+            return [{"source": {"name": "Base institucional Nidum"},
+                     "document": docs_all, "metadata": metas_all, "distances": dists_all}]
 
         # COTA POR-COLECAO (Fase 3): busca CADA colecao SEPARADAMENTE, com vaga propria -
         # ACERVOS garantido, FONTE minoria. Sem isto, o corte global por score deixa a
@@ -4405,34 +4436,20 @@ class Pipe:
             return [src]
 
         # Busca GLOBAL (corte de k por score, comparavel entre colecoes por cross-encoder).
-        # Encapsulada para a REDE DE SEGURANCA do MAPA reexecutar nas 7 sem duplicar codigo.
-        async def _consulta_global(bs):
-            r = await query_collection(
-                request, collection_names=bs, queries=[texto],
-                embedding_function=_ef, k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K)
-            d = (r or {}).get("documents") or []
-            m = (r or {}).get("metadatas") or []
-            if not d or not d[0]:
-                return []
-            s = {"source": {"name": "Base institucional Nidum"},
-                 "document": d[0], "metadata": (m[0] if m else [])}
-            di = (r or {}).get("distances") or []
-            if di:
-                s["distances"] = di[0]
-            return [s]
-
-        out = await _consulta_global(bases)
-        # REDE DE SEGURANCA (so com MAPA ativo): 0 trechos nas colecoes selecionadas ->
-        # reexecuta em TODAS as novas. Marca no log. Custo zero no caso normal (so no vazio).
-        if _sel is not None and not out and _todas and (set(_todas) - set(bases)):
-            bases2 = sorted(set(_todas))
-            if user:
-                bases2 = sorted(await filter_accessible_collections(set(bases2), user))
-            if bases2:
-                log.info("chatnd: MAPA rede de seguranca -> 0 nas selecionadas; "
-                         "reexecuta nas %d colecoes novas", len(bases2))
-                out = await _consulta_global(bases2)
-        return out
+        # Caminho do MAPA-OFF (comportamento atual): UMA chamada com todas as bases.
+        resultado = await query_collection(
+            request, collection_names=bases, queries=[texto],
+            embedding_function=_ef, k=self.valves.TOP_K_DOCUMENTOS or cfg.TOP_K)
+        docs = (resultado or {}).get("documents") or []
+        metas = (resultado or {}).get("metadatas") or []
+        if not docs or not docs[0]:
+            return []
+        src = {"source": {"name": "Base institucional Nidum"},
+               "document": docs[0], "metadata": (metas[0] if metas else [])}
+        distancias = (resultado or {}).get("distances") or []
+        if distancias:
+            src["distances"] = distancias[0]
+        return [src]
 
     async def _contexto_documento(self, request, user, texto, texto_atual=None,
                                   emitter=None, conceitual=None,

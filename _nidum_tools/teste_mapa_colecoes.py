@@ -33,8 +33,6 @@ def check(nome, cond):
 def main():
     ok = True
     P = C._parse_mapa_colecoes
-    S = C._colecoes_para_busca
-
     # ---- parse ----
     ok = check("parse: json valido", P('{"atas":"A"}') == {"atas": "A"}) and ok
     ok = check("parse: vazio -> {}", P("") == {}) and ok
@@ -44,33 +42,13 @@ def main():
     ok = check("parse: key minuscula, dropa vazio/nao-str",
                P('{"Atas":"A","x":"","y":123}') == {"atas": "A"}) and ok
 
-    # ---- selecao / fallback ----
-    ok = check("mapa vazio -> (None,None) = comportamento atual",
-               S({}, False, False) == (None, None)) and ok
-
-    sel, todas = S(MAPA, True, False)   # conceitual
-    ok = check("conceitual -> fonte+normas", sel == ["F", "N"]) and ok
-    ok = check("conceitual: todas = as 7", todas == TODAS) and ok
-
-    sel, _ = S(MAPA, False, True)       # temporal
-    ok = check("temporal -> atas+projetos", sel == ["A", "P"]) and ok
-
-    sel, _ = S(MAPA, False, False)      # default
-    ok = check("default -> todas as 7", sel == TODAS) and ok
-
-    # conceitual vence temporal quando ambos
-    sel, _ = S(MAPA, True, True)
-    ok = check("conceitual vence temporal", sel == ["F", "N"]) and ok
-
-    # parcial: papel ausente e filtrado, nunca devolve vazio
-    sel, todas = S({"atas": "A", "fonte": "F"}, True, False)
-    ok = check("parcial conceitual: so o que existe (fonte)", sel == ["F"]) and ok
-    ok = check("parcial: todas = os presentes", todas == ["A", "F"]) and ok
-
-    # parcial onde os selecionados somem -> cai em todas (nunca vazio)
-    sel, _ = S({"marca": "M"}, True, False)
-    ok = check("parcial sem os papeis alvo -> cai em todas (nao vazio)",
-               sel == ["M"]) and ok
+    # ---- MAPA ativo -> TODAS as ids (nunca filtra por tema; a busca da 1.64.1 usa todas) ----
+    ids = list(dict.fromkeys(P(
+        '{"atas":"A","projetos":"P","fonte":"F","normas":"N","marca":"M",'
+        '"contratos":"C","externo":"E"}').values()))
+    ok = check("MAPA ativo -> todas as 7 ids (sem filtro por tema)", ids == TODAS) and ok
+    ok = check("MAPA vazio -> sem ids (comportamento atual)",
+               list(P("").values()) == []) and ok
 
     # ---- etiquetas do contexto injetado (entrega C) ----
     E = C._etiquetas_trecho
