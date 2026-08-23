@@ -36,6 +36,7 @@ from open_webui.env import (
     ENABLE_QUERIES_CACHE,
     ENABLE_REALTIME_CHAT_SAVE,
     ENABLE_RESPONSES_API_STATEFUL,
+    FOLDER_KNOWLEDGE_TO_METADATA,
     GLOBAL_LOG_LEVEL,
     RAG_SYSTEM_CONTEXT,
 )
@@ -2471,15 +2472,25 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             if 'files' in folder.data:
                 # Defensive: filter to entries the caller can still read.
                 allowed_files = await get_accessible_folder_files(folder.data['files'], user)
-                if metadata.get('params', {}).get('function_calling') != 'native':
+                if (
+                    FOLDER_KNOWLEDGE_TO_METADATA
+                    or metadata.get('params', {}).get('function_calling') == 'native'
+                ):
+                    # NIDUM (canal do projeto): nao injeta os arquivos da pasta no
+                    # form_data['files'] - isso rodava o RAG upstream E colava os
+                    # <source> na mensagem do usuario EM TODO turno (medido: "bom dia"
+                    # de 18 chars chegava ao pipe com 113.925). Entrega a lista em
+                    # metadata['folder_knowledge'] (mesmo contrato do caminho native)
+                    # e a camada de modelo decide: o pipe ChatND monta canal proprio,
+                    # rotulado e com orcamento. Desligavel via env var
+                    # FOLDER_KNOWLEDGE_TO_METADATA=False (volta ao comportamento
+                    # upstream, sem rebuild).
+                    metadata['folder_knowledge'] = allowed_files
+                else:
                     form_data['files'] = [
                         *allowed_files,
                         *form_data.get('files', []),
                     ]
-                else:
-                    # Native FC: skip RAG injection, builtin tools
-                    # will read folder knowledge from metadata.
-                    metadata['folder_knowledge'] = allowed_files
 
     # Model "Knowledge" handling
     user_message = get_last_user_message(form_data['messages'])
