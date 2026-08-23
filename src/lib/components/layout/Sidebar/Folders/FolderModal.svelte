@@ -229,7 +229,7 @@
 					{/if}
 
 					<div class="my-2">
-						<Knowledge bind:selectedItems={data.files}>
+						<Knowledge bind:selectedItems={data.files} collectionsOnly={true}>
 							<div slot="label">
 								<div class="flex w-full justify-between">
 									<div class=" mb-2 text-xs text-gray-500">

@@ -13,6 +13,8 @@
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	export let selectedItems = [];
+	// NIDUM: repassado ao KnowledgeSelector -- ver a nota la.
+	export let collectionsOnly: boolean = false;
 	const i18n = getContext('i18n');
 
 	let loaded = false;
@@ -192,6 +194,7 @@
 		{#if loaded}
 			<div class="flex flex-wrap flex-row text-sm gap-1">
 				<KnowledgeSelector
+					{collectionsOnly}
 					on:select={(e) => {
 						const item = e.detail;
 

@@ -20,6 +20,11 @@
 	const dispatch = createEventDispatcher();
 
 	export let onClose: Function = () => {};
+	// NIDUM: quando true, o seletor lista SOMENTE colecoes (sem notas nem arquivos
+	// avulsos). Usado pelo modal de Pasta ("projeto"): a pasta aponta para colecao
+	// inteira, nunca para arquivo solto. Default false = comportamento original
+	// (editor de Modelos do Workspace segue listando os tres tipos).
+	export let collectionsOnly: boolean = false;
 
 	let show = false;
 
@@ -46,8 +51,15 @@
 	});
 
 	const getItems = () => {
-		getNoteItems();
 		getKnowledgeItems();
+
+		if (collectionsOnly) {
+			noteItems = [];
+			fileItems = [];
+			return;
+		}
+
+		getNoteItems();
 		getKnowledgeFileItems();
 	};
 
