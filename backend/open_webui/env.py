@@ -359,6 +359,15 @@ RESET_CONFIG_ON_START = os.getenv('RESET_CONFIG_ON_START', 'False').lower() == '
 ENABLE_REALTIME_CHAT_SAVE = os.getenv('ENABLE_REALTIME_CHAT_SAVE', 'False').lower() == 'true'
 ENABLE_QUERIES_CACHE = os.getenv('ENABLE_QUERIES_CACHE', 'False').lower() == 'true'
 RAG_SYSTEM_CONTEXT = os.getenv('RAG_SYSTEM_CONTEXT', 'False').lower() == 'true'
+# NIDUM: quando True (default), os arquivos/colecoes de uma PASTA (projeto) NAO sao
+# injetados no form_data['files'] (RAG upstream + <source> na mensagem do usuario);
+# vao para metadata['folder_knowledge'], como o caminho native-FC ja faz, e quem
+# decide como usa-los e a camada de modelo (o pipe ChatND monta canal proprio com
+# orcamento). Motivo (medido em 2026-08-23): a injecao upstream colava ate ~114k
+# chars na pergunta A CADA turno dentro de uma pasta, vencia a disputa de atencao
+# contra o acervo do pipe (doutrina respondida por material do projeto) e nao
+# aparecia na contabilidade (anexo=0). Reversivel por env var, sem rebuild.
+FOLDER_KNOWLEDGE_TO_METADATA = os.getenv('FOLDER_KNOWLEDGE_TO_METADATA', 'True').lower() == 'true'
 
 ####################################
 # REDIS
