@@ -148,8 +148,8 @@
       "londrina"
     ],
     "pastas": [
-      "acervos/produtos/comunidades vivas - londrina",
-      "cvi"
+      "cvi",
+      "produtos/comunidades vivas - londrina"
     ],
     "siglas": [
       "CVI"
@@ -163,8 +163,8 @@
       "fazendas vivas"
     ],
     "pastas": [
-      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza",
-      "fan"
+      "fan",
+      "gestao de projetos/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza"
     ],
     "siglas": [
       "FAN"
@@ -180,7 +180,7 @@
       "portfolio"
     ],
     "pastas": [
-      "acervos/financas e gestao de projetos"
+      "financas"
     ],
     "siglas": [
       "FIN"
@@ -193,7 +193,7 @@
       "fornecedores"
     ],
     "pastas": [
-      "acervos/suprimentos e fornecedores/fornecedores"
+      "suprimentos e fornecedores"
     ],
     "siglas": []
   },
@@ -239,8 +239,8 @@
       "nidum brasil"
     ],
     "pastas": [
-      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/2. projeto mvp ipanema",
-      "bra"
+      "bra",
+      "gestao de projetos/3.1.3 portfolio de projetos/2. projeto mvp ipanema"
     ],
     "siglas": [
       "BRA"
@@ -252,8 +252,8 @@
       "nidum mundo"
     ],
     "pastas": [
-      "acervos/produtos/nidum mundo",
-      "mun"
+      "mun",
+      "produtos/nidum mundo"
     ],
     "siglas": [
       "MUN"
@@ -279,7 +279,7 @@
       "quem e"
     ],
     "pastas": [
-      "acervos/tecnologia/ninho de agentes/chico/1 - cadastros"
+      "tecnologia/ninho de agentes/chico/1 - cadastros"
     ],
     "siglas": []
   },
@@ -290,8 +290,8 @@
       "tecnologia"
     ],
     "pastas": [
-      "acervos/tecnologia",
-      "tec"
+      "tec",
+      "tecnologia"
     ],
     "siglas": [
       "TEC"
@@ -317,7 +317,7 @@
       "produtos"
     ],
     "pastas": [
-      "acervos/produtos"
+      "produtos"
     ],
     "siglas": [
       "PROD"

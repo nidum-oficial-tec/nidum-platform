@@ -56,7 +56,7 @@ def main():
                    got == f["tipo"]) and ok
 
     # ASSUNTO por meta_name: FAZ -> fazenda (por pasta); ACA_Convergencia -> academia (sigla).
-    faz = ("ACERVOS > Financas e Gestao de Projetos > 3.1 EGP > 3.1.3 Portfolio de "
+    faz = ("Gestao de Projetos > 3.1.3 Portfolio de "
            "Projetos > 1. Projeto Fazenda Fortaleza > 1.1 Cronogramas > "
            "FAZ_Cronograma_31.07_v3.md")
     ok = check("pipe _f3_assuntos: FAZ -> fazenda",
