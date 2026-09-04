@@ -110,17 +110,17 @@ async def main():
     r4 = await t.gerar_html("Sem imagem", "<h1>ola</h1><p>corpo</p>", None)
     r5 = await t.gerar_apresentacao_html("Sem imagem", slides, None)
     ok &= check("pptx/docx/pdf/html/deck geram sem anexo",
-                all("Link para download" in x for x in (r1, r2, r3, r4, r5)))
+                all("/local/" in x for x in (r1, r2, r3, r4, r5)))
 
     print("== 2 e 3. COM imagens: entram no arquivo, cada uma no seu lugar ==")
     r = await t.gerar_pptx("Com imagem", slides, True, None, "TEC", 1, [LARGA, ALTA])
-    ok &= check("gerar_pptx com 2 imagens", "Link para download" in r)
+    ok &= check("gerar_pptx com 2 imagens", "/local/" in r)
     r = await t.gerar_docx("Com imagem", secoes, True, None, "TEC", 1, [LARGA, ALTA])
-    ok &= check("gerar_docx com 2 imagens", "Link para download" in r)
+    ok &= check("gerar_docx com 2 imagens", "/local/" in r)
     r = await t.gerar_pdf("Com imagem", secoes, True, None, "TEC", 1, [LARGA, ALTA])
-    ok &= check("gerar_pdf com 2 imagens", "Link para download" in r)
+    ok &= check("gerar_pdf com 2 imagens", "/local/" in r)
     r = await t.gerar_apresentacao_html("Com imagem", slides, None, "TEC", 1, [LARGA, ALTA])
-    ok &= check("deck com 2 imagens", "Link para download" in r)
+    ok &= check("deck com 2 imagens", "/local/" in r)
 
     # Conferencia ESTRUTURAL: a imagem existe DENTRO do arquivo (nao e placeholder)?
     from pptx import Presentation
