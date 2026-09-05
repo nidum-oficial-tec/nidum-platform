@@ -36,15 +36,6 @@ jobs:
       - name: Baixar a plataforma
         uses: actions/checkout@v4
 
-      - name: Baixar a esteira (opcional)
-        id: esteira
-        continue-on-error: true
-        uses: actions/checkout@v4
-        with:
-          repository: nidum-oficial-tec/nidum-chatnd-basefonte
-          token: ${{ secrets.ESTEIRA_TOKEN }}
-          path: _esteira
-
       - name: Preparar Python
         uses: actions/setup-python@v5
         with:
@@ -53,6 +44,7 @@ jobs:
       - name: Conferir
         id: conf
         env:
+          ESTEIRA_TOKEN: ${{ secrets.ESTEIRA_TOKEN }}
           FRAC_CATASTROFE: ${{ vars.FRAC_CATASTROFE }}
           OPENWEBUI_BASE_URL: ${{ secrets.OPENWEBUI_BASE_URL }}
           OPENWEBUI_API_KEY: ${{ secrets.OPENWEBUI_API_KEY }}
@@ -64,7 +56,18 @@ jobs:
           # Duas armadilhas de shell numa linha que so escolhia entre dois casos.
           # Agora o caminho e SEMPRE passado, e QUEM DECIDE E O SCRIPT - que ja
           # sabe relatar "nao conferida" quando a pasta nao existe.
+          # CLONE EXPLICITO, e nao actions/checkout com continue-on-error. O
+          # passo de checkout aparecia como `success` sem trazer nada -
+          # continue-on-error mascara o resultado real do passo, e quem contou a
+          # verdade foi o `ls`. Passo que se diz bem-sucedido sem ter feito o
+          # trabalho e a mesma familia do conferidor que erra sozinho: gasta a
+          # confianca de quem le o log.
           EST="$GITHUB_WORKSPACE/_esteira"
+          if [ -n "$ESTEIRA_TOKEN" ]; then
+            git clone --depth 1 --quiet "https://x-access-token:$ESTEIRA_TOKEN@github.com/nidum-oficial-tec/nidum-chatnd-basefonte.git" "$EST" && echo "esteira clonada" || echo "CLONE FALHOU"
+          else
+            echo "sem ESTEIRA_TOKEN - duas classes ficam de fora"
+          fi
           ls -d "$EST/_scripts" || echo "esteira AUSENTE em $EST"
           set +e
           python _nidum_manutencao/conferir_registros.py \
