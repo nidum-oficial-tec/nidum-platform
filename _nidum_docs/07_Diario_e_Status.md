@@ -13,6 +13,150 @@
 
 ---
 
+## 2026-09-05 - O EIXO DAS COLECOES MUDA: base = pasta-mae
+
+> Entrada escrita na `main`. A entrada do fechamento da Fase A (03/09) esta no PR
+> #41 e ainda nao foi mergeada - quando for, ela entra ABAIXO desta.
+
+**Decisao do Davi, revertendo um desenho da Fase 1.** As sete colecoes por tipo de
+documento dao lugar a **dez bases, uma por pasta-mae do SharePoint**. O registro
+completo - proposta, contra-argumento na integra, decisao e o que a invalidaria -
+esta na pagina de decisao; aqui fica o estado.
+
+### A premissa que decide
+
+> Quem seleciona uma base recebe **so o que esta nela**. Se a resposta esta em outra,
+> o usuario seleciona a base certa - ou nenhuma, e o acervo inteiro fica disponivel.
+> O Modo 2 e para quem quer **menos**, nao para quem quer tudo por outro caminho.
+
+### O teste do `#`, e o custo da regra num exemplo
+
+Mesma pergunta, duas respostas:
+
+| | resposta |
+|---|---|
+| **com `#` em Reunioes** | "11%, Etapa 1 em curso" |
+| **sem `#`** (acervo inteiro) | "78%, Etapa 1 concluida" |
+
+**As duas estao certas.** A primeira le so as atas; a segunda le tambem os
+cronogramas, que estao em Gestao de Projetos. E a regra do produto funcionando - e
+e o custo dela, ilustrado: **recorte estreito da resposta desatualizada, nao
+resposta errada**, e quem escolheu o recorte assumiu isso. Sem mitigacao prevista,
+por desenho.
+
+### As dez bases - linha de base de 05/09/2026
+
+| base | arquivos | % |
+|---|---:|---:|
+| Produtos | 140 | 26,7 |
+| Tecnologia | 100 | 19,1 |
+| 1 - Fonte | 83 | 15,8 |
+| Operacoes | 81 | 15,5 |
+| 3 - Reunioes | 75 | 14,3 |
+| Gestao de Projetos | 18 | 3,4 |
+| Marketing | 14 | 2,7 |
+| Academia | 10 | 1,9 |
+| Sustentabilidade | 2 | 0,4 |
+| Juridico | 1 | 0,2 |
+
+`Suprimentos e Fornecedores` virou subpasta de `Operacoes` (por isso 81, e nao 79).
+Quatro pastas-mae ficam **declaradas como excluidas**: `0 - Comece por aqui`,
+`4 - Pastas de Trabalho`, `Plataformas Regionais` e `Financas`.
+
+**A concentracao melhora:** a `nd-normas` detinha **55%** do acervo; a maior base do
+eixo novo fica em **26,7%**. E a expectativa estava invertida - o grosso vai para
+**Produtos**, nao para Operacoes.
+
+### A migracao foi CONCLUIDA no mesmo dia
+
+| passo | resultado |
+|---|---|
+| 1 - orfaos antes | 0 e 0, 543 arquivos em 7 colecoes |
+| 2 - carga (`resync`) | **falhou** e foi re-executada; ver abaixo |
+| 3 - codigo e config | o corte foi o merge do `sync_config.json` |
+| 4 - rodada A | **379 adicionados, 0 removidos, 0 freios** |
+| 5 - conferencia | 0 e 0 nas nove |
+| **6 - `MAPA_COLECOES`** | **NAO FEITO** - valve do painel, exige credencial |
+| 7 - rodada B | **34 removidos**, freio `AUTORIZADO` (9 eventos, 31%) |
+| 8 - restaurar e conferir | `FRAC_CATASTROFE` de volta a `0.25`; **0 e 0** |
+| 9 - apagar as 5 antigas | do Davi; elas seguem intactas, 349 arquivos |
+
+**Contagens finais** - 539 indexados, contra 543 antes. A diferenca de 4 sao
+arquivos das quatro pastas-mae agora DECLARADAS como excluidas.
+
+| base | arquivos |
+|---|---:|
+| Produtos | 141 |
+| Tecnologia | 107 |
+| 1 - Fonte | 85 |
+| Operacoes | 84 |
+| 3 - Reunioes | 75 |
+| Gestao de Projetos | 19 |
+| Marketing | 15 |
+| Academia | 10 |
+| Sustentabilidade | 2 |
+| Juridico | 1 |
+
+### As duas re-execucoes, e o que cada uma revelou
+
+**A primeira (17:08) provou que a via 3 do D28 se cura sozinha.** O `resync`
+abortou num erro de API - `400 We could not find what you're looking for` ao
+atualizar um documento cujo id a colecao nao resolvia mais. Ficaram 17 arquivos de
+`nd-normas` fora do indice, com o repo ja avancado. A re-execucao os retomou sem
+intervencao nenhuma: `novos:17 -> adicionados:17`. **O plano e recalculado do zero
+a cada rodada** - e isso deixou de ser teoria.
+
+**A segunda (18:03) nao foi da esteira: foi da ferramenta de conferencia.** Logo
+apos o corte, o relatorio acusou **573 orfaos com `repo:0` em todas as dez bases**.
+A base estava certa; a rodada A tinha acabado de escrever 379 arquivos. Errado
+estava o relatorio, que particionava pelas chaves `nd-*` enquanto a esteira ja
+escrevia pelo eixo novo - o "desejado" virava zero, e tudo que estava na base
+parecia orfao.
+
+> **Principio, e vale alem deste caso: ferramenta de conferencia que erra sozinha e
+> pior que ferramenta ausente.** Ausente, ninguem confia nela. Errada, ela gasta a
+> confianca de quem for ler o proximo alarme - que pode ser verdadeiro. O conserto
+> nao foi ensinar o eixo novo ao relatorio: foi faze-lo ler **o mesmo interruptor**
+> que a esteira le. Duas copias de uma decisao divergem; a pergunta certa e sempre
+> quem e a fonte.
+
+### O alarme que nao disparou, e por que isso e a resposta certa
+
+O alarme de defasagem (D31) rodou as 04:20, 10:30, 15:08 e 17:18, e **nao abriu
+issue**. Havia defasagem real - 17 arquivos - entre 16:56 e 17:08: **doze minutos**,
+contra o limite de 12h. Ele estava certo em ficar calado, e teria aberto a issue
+atribuida se ninguem tivesse agido. **A primeira prova do N=12h veio de um caso que
+ninguem plantou.**
+
+Quem avisou foi outro mecanismo: o passo "Falha -> Issue" do `puxar_sharepoint`
+abriu a issue #154 as 16:56. Ela foi fechada as 18:08 com o registro do que
+aconteceu e de como fechou - para "issue aberta" continuar significando uma coisa
+so: problema **agora**.
+
+### INCIDENTE EVITADO: a rodada A disparou sozinha
+
+**Nao e sucesso - funcionou por acaso.** O merge do corte tocava um `.md` (o
+`LEIA.md` do arquivamento do residuo), e o `sincronizar.yml` dispara em push com
+`**/*.md`. A rodada A executou **antes** do dry-run que eu tinha programado para
+conferi-la.
+
+Deu certo, e por isso e mais perigoso: **se o corte tivesse um defeito, ele teria
+ido a producao sem simulacao nenhuma**. Qualquer PR que toque um `.md` - inclusive
+um PR so de documentacao - dispara escrita na base.
+
+**Decisao do Davi:** restringir o `paths` do gatilho as pastas de conteudo,
+excluindo `_arquivo/`, `_docs/` e o que nao for acervo indexavel. Despacho manual
+foi recusado por reintroduzir o "alguem precisa lembrar" - e o alarme de defasagem
+ja cobre o risco que ele evitaria.
+
+### Registrado no mesmo dia
+
+D32 (o caso "NAO CIRCULAM" era falso positivo), D33 (numero sem metodo), D34 (o
+incidente de governanca que **nao** existia), D35 (as bases ficam sem descricao).
+
+---
+
+
 ## 2026-09-03 — FASE A FECHADA: do roteador ao agente (preset agêntico validado)
 
 **O ChatND ganhou um caminho agêntico funcional, em paralelo ao pipe, sem tocar em produção.**
