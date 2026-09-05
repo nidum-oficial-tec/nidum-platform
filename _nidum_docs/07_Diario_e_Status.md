@@ -94,6 +94,54 @@ migracao esta parada no passo 3 **por construcao, e nao por falha**.
 - **As cinco colecoes antigas nao sao esvaziadas** - congelam como ponto de reversao.
   Esvaziar dispara `BLOQUEIA_ESVAZIAR`, que nao tem excecao.
 
+### O `resync` FALHOU - e virou o primeiro caso real do alarme
+
+A carga do passo 2 rodou em modo `resync` (reconverte tudo, nunca remove) e
+**abortou no meio da sincronizacao**:
+
+```
+ERRO ao atualizar 'Tecnologia > ... > NIDUM_Editor_Fluxograma_v17.md'
+(colecao 'ND - Normas e governanca'): 400 {"detail":"We could not find what
+you're looking for :/"}
+```
+
+Um id de arquivo que a colecao nao resolve mais. **Nao e freio** - e falha de API,
+a **via 3** das cinco vias de nascimento de orfao do D28. A propria mensagem do
+codigo diz o que fazer: *"a proxima execucao reconstroi o plano a partir da
+colecao e o retoma sozinha"*.
+
+**O estado que ficou** - e ele e exatamente o que o D28 descreve:
+
+| | |
+|---|---|
+| commit da carga | **entrou** no repo (`0a5bedb`), 649 `.md` |
+| sincronizacao | **abortada**, indice congelado |
+| orfaos | **zero** - nada sobrando na base |
+| **faltando no indice** | **17** em `nd-normas` (indice 286, repo 303) |
+
+**Repo avancou, indice nao.** Nao ha nada a desfazer: o plano e recalculado do zero
+a cada rodada, entao a proxima retoma os 17 sozinha. **Nao foi re-executado** - a
+regra da ausencia manda parar e registrar, e uma rodada que falhou no meio nao se
+conserta as cegas.
+
+**E o primeiro teste nao planejado do alarme de defasagem** (D31, no ar desde o
+merge do PR #149): ha commit de `.md` na `main` mais novo que a ultima escrita
+bem-sucedida. Se ninguem rodar a esteira, ele abre a issue atribuida em **12h**.
+E a checagem funcionando sobre um caso que ninguem plantou.
+
+**Achado sobre a propria ferramenta, e vale conserto:** o relatorio de orfaos
+imprime `indice:286 repo:303` lado a lado, mas **conta zero e diz "zero"** - ele
+mede orfao (sobra na base) e nao mede FALTANTE (sobra no repo). Quem le em
+diagonal ve "ORFAOS: 0" e passa direto pelos 17. As duas metades da divergencia
+merecem o mesmo destaque. **Nao consertei** - registrar antes de mexer, para a
+leitura ser conferida antes de virar codigo.
+
+**Efeito colateral do modo aditivo:** o `Descritivo do Processo` de Suprimentos
+existe agora em DOIS caminhos no repo - o novo (`Operacoes > Suprimentos e
+Fornecedores`, com `ecossistema: Operacoes`) e o antigo, que o `resync` nao remove
+por desenho. O antigo vai aparecer como "sem destino" na simulacao do eixo ate uma
+rodada com remocao passar.
+
 ### Registrado no mesmo dia
 
 D32 (o caso "NAO CIRCULAM" era falso positivo), D33 (numero sem metodo), D34 (o
