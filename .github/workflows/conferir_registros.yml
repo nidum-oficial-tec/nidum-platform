@@ -1,0 +1,90 @@
+# CONFERIDOR DE REGISTROS. So leitura, gatilho manual + semanal.
+#
+# Confere se a DOCUMENTACAO e as FIXTURES descrevem o que o codigo, o repositorio e
+# a base tem. Nasceu dos catorze registros que descreviam coisas revogadas ou
+# apagadas - e dois deles apareceram POR ACASO, no meio de outra tarefa.
+#
+# JOB VERDE AO ENCONTRAR (rc 2). Relatorio que fica vermelho ao cumprir a funcao
+# treina todo mundo a ignorar o vermelho (D30). Vermelho aqui significa uma coisa
+# so: o conferidor quebrou.
+#
+# DUAS CLASSES DEPENDEM DE COISAS QUE ESTE REPO NAO TEM, e o relatorio DIZ quando
+# nao as conferiu, em vez de contar como "nada encontrado":
+#   - id_fantasma e fixture_vencida precisam do repo da ESTEIRA. Sem o secret
+#     ESTEIRA_TOKEN (um PAT com leitura em nidum-chatnd-basefonte) elas ficam de
+#     fora.
+#   - base_indevida precisa das credenciais da base (OPENWEBUI_*), que hoje moram
+#     so no repo da esteira.
+# Classe nao conferida contada como limpa e a forma mais silenciosa de um
+# conferidor mentir - por isso a ausencia e RELATADA.
+
+name: Conferidor de registros (doc x codigo x repo)
+
+on:
+  schedule:
+    # Semanal: a defasagem que ele mede acumula em semanas, nao em horas.
+    - cron: '40 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar a plataforma
+        uses: actions/checkout@v4
+
+      - name: Baixar a esteira (opcional)
+        id: esteira
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: nidum-oficial-tec/nidum-chatnd-basefonte
+          token: ${{ secrets.ESTEIRA_TOKEN }}
+          path: _esteira
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Conferir
+        id: conf
+        env:
+          FRAC_CATASTROFE: ${{ vars.FRAC_CATASTROFE }}
+          OPENWEBUI_BASE_URL: ${{ secrets.OPENWEBUI_BASE_URL }}
+          OPENWEBUI_API_KEY: ${{ secrets.OPENWEBUI_API_KEY }}
+        run: |
+          EST="_esteira"
+          [ -d "$EST/_scripts" ] || EST=""
+          set +e
+          python _nidum_manutencao/conferir_registros.py \
+            ${EST:+--esteira "$EST"} --nota "$RUNNER_TEMP/nota.md" \
+            2>&1 | tee "$RUNNER_TEMP/saida.txt"
+          RC=${PIPESTATUS[0]}
+          set -e
+          {
+            echo '### Conferidor de registros'
+            echo ''
+            echo '```'
+            grep -E '^== |^   consequencia' "$RUNNER_TEMP/saida.txt" || true
+            echo '```'
+            echo ''
+            echo 'A lista completa esta no artefato `nota-registros`, pronta para'
+            echo 'virar Nota na plataforma. A importacao e manual, de proposito:'
+            echo 'conferidor que escreve na plataforma deixa de ser conferidor.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RC" != "0" ] && [ "$RC" != "2" ]; then
+            echo "::error::conferir_registros.py falhou (rc=$RC)"; exit "$RC"
+          fi
+
+      - name: Guardar a Nota
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nota-registros
+          path: ${{ runner.temp }}/nota.md
+          retention-days: 14
+          if-no-files-found: warn

@@ -238,6 +238,44 @@ def codigo_de_saida(achados):
     """
     return 2 if achados else 0
 
+def _bases_que_ficam_vazias(esteira):
+    """Pastas-mae DECLARADAS como excluidas: nenhuma delas deveria ter base com
+    conteudo. Le do sync_config, e nao de uma lista propria - duas copias de uma
+    declaracao divergem, e a que envelhece e sempre a do conferidor."""
+    caminho = os.path.join(esteira or "", "_scripts", "sync_config.json")
+    try:
+        cfg = json.loads(_ler(caminho))
+    except Exception:
+        return []
+    return list((cfg.get("pastas_mae_excluidas") or {}).keys())
+
+
+def _contagens_do_painel():
+    """{nome da colecao: n arquivos} do painel, ou None sem credencial.
+
+    None e diferente de {}: vazio significa 'conferi e nao ha nada', None
+    significa 'nao consegui conferir'. O relatorio trata os dois de forma
+    diferente de proposito."""
+    base = os.environ.get("OPENWEBUI_BASE_URL")
+    chave = os.environ.get("OPENWEBUI_API_KEY")
+    if not base or not chave:
+        return None
+    import urllib.request
+    req = urllib.request.Request(
+        base.rstrip("/") + "/api/v1/knowledge/",
+        headers={"Authorization": "Bearer " + chave})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            dados = json.loads(r.read().decode())
+    except Exception:
+        return None
+    out = {}
+    for k in dados or []:
+        nome = (k.get("name") or "").strip()
+        arquivos = ((k.get("data") or {}).get("file_ids")) or []
+        out[nome] = len(arquivos)
+    return out
+
 def conferir(plataforma=None, esteira=None):
     plataforma = plataforma or _PLATAFORMA
     esteira = esteira or _ESTEIRA_PADRAO
@@ -294,8 +332,31 @@ def conferir(plataforma=None, esteira=None):
             if nome_arq.startswith("07_"):
                 continue
             texto = _ler(arq)
+            linhas_do_id = {}
+            for linha in texto.split(chr(10)):
+                for c in _RE_UUID8.findall(linha):
+                    linhas_do_id.setdefault(c, linha)
             for curto in sorted(set(_RE_UUID8.findall(texto))):
                 if curto in ids_config:
+                    continue
+                ctx = _fold(linhas_do_id.get(curto, "")).lower()
+                # DOIS FALSOS POSITIVOS que o proprio conserto dos registros
+                # vencidos criou, e que so aparecem rodando:
+                #
+                # (a) SHA DE COMMIT. O regex casa qualquer 8 hex, e a correcao do
+                #     documento-inteiro passou a citar o commit 'e7232ec2' como
+                #     PROVA da data. Acusar a prova de ser id morto e o conferidor
+                #     brigando com a disciplina que ele mesmo deveria premiar.
+                if "commit" in ctx:
+                    continue
+                # (b) ID CITADO JUSTAMENTE COMO MORTO. O 04 e o 08 dizem que
+                #     'f2c8a48c' e 'a85d8a8f' foram APAGADAS - a doc esta certa, e
+                #     e essa a informacao util. Sinalizar aqui treinaria a apagar a
+                #     mencao, que e o oposto do que se quer: um id morto explicado
+                #     e documentacao; um id morto silencioso e a armadilha.
+                if any(m in ctx for m in ("apagad", "mort", "aposentad",
+                                          "removid", "revogad", "extint",
+                                          "nao existe mais")):
                     continue
                 achados.append(_achado(
                     "id_fantasma",
@@ -304,6 +365,26 @@ def conferir(plataforma=None, esteira=None):
                     os.path.relpath(arq, plataforma),
                     "id de colecao muda e some; doc que cita id morto manda o "
                     "leitor para uma colecao que nao existe"))
+
+    # F - FRAC_CATASTROFE fora do valor de desenho (variavel de repo da esteira).
+    # Le do ambiente: na Action vem de vars.FRAC_CATASTROFE; na mao, de quem exportar.
+    # Ausente NAO acusa - sem variavel vale o padrao do workflow, que ja e 0,25.
+    achados.extend(conferir_frac_catastrofe(os.environ.get("FRAC_CATASTROFE")))
+
+    # G - base que deveria estar vazia e nao esta. Precisa das contagens do painel,
+    # que so existem com credencial; sem ela, a classe fica de fora E ISSO E DITO no
+    # relatorio, em vez de passar por "nada encontrado".
+    contagens = _contagens_do_painel()
+    if contagens is None:
+        achados.append(_achado(
+            "nao_conferido",
+            "base_indevida NAO foi conferida: faltam OPENWEBUI_BASE_URL/"
+            "OPENWEBUI_API_KEY neste ambiente",
+            "ambiente de execucao",
+            "classe nao conferida contada como 'nada encontrado' e a forma mais "
+            "silenciosa de um conferidor mentir"))
+    else:
+        achados.extend(conferir_bases_vazias(contagens, _bases_que_ficam_vazias(esteira)))
 
     # E - fixture com caminho de pasta inexistente
     pastas = _pastas_do_repo(esteira)
@@ -357,6 +438,8 @@ _TITULOS = {
     "valve_nao_documentada": "Valves do codigo que a doc nao descreve",
     "default_divergente": "Defaults em que a doc e o codigo discordam",
     "id_fantasma": "Ids de colecao citados na doc e ausentes do config",
+    "nao_conferido": ("CLASSES QUE NAO FORAM CONFERIDAS - leia antes de concluir "
+                       "que esta tudo bem"),
     "fixture_vencida": ("Fixtures apontando para pasta que nao existe "
                         "(LISTA PARA REVISAO: parte pode ser sintetica)"),
 }
