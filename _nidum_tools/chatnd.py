@@ -3577,8 +3577,8 @@ _FATIA_FASE3 = json.loads('''
       "londrina"
     ],
     "pastas": [
-      "acervos/produtos/comunidades vivas - londrina",
-      "cvi"
+      "cvi",
+      "produtos/comunidades vivas - londrina"
     ],
     "siglas": [
       "CVI"
@@ -3592,8 +3592,8 @@ _FATIA_FASE3 = json.loads('''
       "fazendas vivas"
     ],
     "pastas": [
-      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza",
-      "fan"
+      "fan",
+      "gestao de projetos/3.1.3 portfolio de projetos/1. projeto fazenda fortaleza"
     ],
     "siglas": [
       "FAN"
@@ -3609,7 +3609,7 @@ _FATIA_FASE3 = json.loads('''
       "portfolio"
     ],
     "pastas": [
-      "acervos/financas e gestao de projetos"
+      "financas"
     ],
     "siglas": [
       "FIN"
@@ -3622,7 +3622,7 @@ _FATIA_FASE3 = json.loads('''
       "fornecedores"
     ],
     "pastas": [
-      "acervos/suprimentos e fornecedores/fornecedores"
+      "suprimentos e fornecedores"
     ],
     "siglas": []
   },
@@ -3668,8 +3668,8 @@ _FATIA_FASE3 = json.loads('''
       "nidum brasil"
     ],
     "pastas": [
-      "acervos/financas e gestao de projetos/3.1 egp/3.1.3 portfolio de projetos/2. projeto mvp ipanema",
-      "bra"
+      "bra",
+      "gestao de projetos/3.1.3 portfolio de projetos/2. projeto mvp ipanema"
     ],
     "siglas": [
       "BRA"
@@ -3681,8 +3681,8 @@ _FATIA_FASE3 = json.loads('''
       "nidum mundo"
     ],
     "pastas": [
-      "acervos/produtos/nidum mundo",
-      "mun"
+      "mun",
+      "produtos/nidum mundo"
     ],
     "siglas": [
       "MUN"
@@ -3708,7 +3708,7 @@ _FATIA_FASE3 = json.loads('''
       "quem e"
     ],
     "pastas": [
-      "acervos/tecnologia/ninho de agentes/chico/1 - cadastros"
+      "tecnologia/ninho de agentes/chico/1 - cadastros"
     ],
     "siglas": []
   },
@@ -3719,8 +3719,8 @@ _FATIA_FASE3 = json.loads('''
       "tecnologia"
     ],
     "pastas": [
-      "acervos/tecnologia",
-      "tec"
+      "tec",
+      "tecnologia"
     ],
     "siglas": [
       "TEC"
@@ -3746,7 +3746,7 @@ _FATIA_FASE3 = json.loads('''
       "produtos"
     ],
     "pastas": [
-      "acervos/produtos"
+      "produtos"
     ],
     "siglas": [
       "PROD"
