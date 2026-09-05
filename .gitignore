@@ -321,3 +321,11 @@ cypress/screenshots
 # Retratos/backups locais do codigo das funcoes (NAO versionar: sao snapshots
 # locais, podem conter segredos em valves). O codigo-fonte oficial vive em _nidum_tools/.
 backup/
+
+# Saidas de RELATORIO local (mesma regra do repo da esteira). Nao sao segredo, mas
+# carregam inventario da base e o caminho da maquina de quem rodou. Entrou um por
+# acidente em 05/09, num `git add -A` que eu nao devia ter usado.
+_nidum_manutencao/relatorio_*.txt
+_nidum_manutencao/*_dryrun.txt
+_diff_pub_vs_main.txt
+_publicado_*.py
