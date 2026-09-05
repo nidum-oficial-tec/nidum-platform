@@ -250,31 +250,82 @@ def _bases_que_ficam_vazias(esteira):
     return list((cfg.get("pastas_mae_excluidas") or {}).keys())
 
 
-def _contagens_do_painel():
-    """{nome da colecao: n arquivos} do painel, ou None sem credencial.
+def _contagens_do_painel(esteira):
+    """{nome da base: n arquivos} do painel, ou None sem credencial/em erro.
 
-    None e diferente de {}: vazio significa 'conferi e nao ha nada', None
-    significa 'nao consegui conferir'. O relatorio trata os dois de forma
-    diferente de proposito."""
+    None e diferente de {}: vazio significa "conferi e nao ha nada"; None
+    significa "nao consegui conferir". O relatorio trata os dois de forma
+    diferente, e e essa a diferenca que impede um conferidor de mentir calado.
+
+    O ENDPOINT CERTO E /knowledge/{id}/files, E ISSO NAO E DETALHE. A primeira
+    versao usava /knowledge/{id} e lia `data.file_ids` - o LEGADO, que o file/add
+    nao atualiza. Ela devolveria ZERO para toda base com arquivos vinculados, e
+    zero e exatamente o valor que esta classe considera "certo": a conferencia
+    passaria sempre, sem conferir nada. O comentario de sincronizar.listar_colecao
+    ja avisava disso; eu nao li antes de escrever.
+
+    PAGINA, porque o endpoint pagina (default 30) - sem isso, base grande contaria
+    30 e a conta so estaria errada nas bases que mais importam.
+    """
     base = os.environ.get("OPENWEBUI_BASE_URL")
     chave = os.environ.get("OPENWEBUI_API_KEY")
     if not base or not chave:
         return None
-    import urllib.request
-    req = urllib.request.Request(
-        base.rstrip("/") + "/api/v1/knowledge/",
-        headers={"Authorization": "Bearer " + chave})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            dados = json.loads(r.read().decode())
+        cfg = json.loads(_ler(os.path.join(esteira or "", "_scripts",
+                                           "sync_config.json")))
+        colecoes = cfg.get("colecoes") or {}
     except Exception:
         return None
+    if not colecoes:
+        return None
+
+    import urllib.request
+    base = base.rstrip("/")
+
+    def _pegar(caminho):
+        req = urllib.request.Request(
+            base + caminho, headers={"Authorization": "Bearer " + chave})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode())
+
     out = {}
-    for k in dados or []:
-        nome = (k.get("name") or "").strip()
-        arquivos = ((k.get("data") or {}).get("file_ids")) or []
-        out[nome] = len(arquivos)
+    for nome, info in colecoes.items():
+        cid = ((info or {}).get("id") or "").strip()
+        if not cid or cid.startswith("PREENCHER"):
+            continue
+        total, pagina = 0, 1
+        try:
+            while True:
+                d = _pegar("/api/v1/knowledge/%s/files?limit=1000&page=%d"
+                           % (cid, pagina))
+                itens = d if isinstance(d, list) else (
+                    (d or {}).get("files") or (d or {}).get("items") or [])
+                if not itens:
+                    break
+                total += len(itens)
+                if len(itens) < 1000:
+                    break
+                pagina += 1
+        except Exception:
+            return None
+        out[nome] = total
     return out
+
+
+def _seguro(fn, *a, **kw):
+    """Executa a coleta e devolve None se ela quebrar, em vez de derrubar tudo.
+
+    MEDIDO em 05/09: um AttributeError dentro da coleta do painel fez o conferidor
+    inteiro sair com rc=1 e PERDER as outras cinco classes - que estavam prontas e
+    corretas. Conferidor e ferramenta de leitura: a falha de uma fonte tem de virar
+    "esta classe nao foi conferida", nunca "nao ha relatorio".
+    """
+    try:
+        return fn(*a, **kw)
+    except Exception:
+        return None
+
 
 def conferir(plataforma=None, esteira=None):
     plataforma = plataforma or _PLATAFORMA
@@ -388,7 +439,7 @@ def conferir(plataforma=None, esteira=None):
     # G - base que deveria estar vazia e nao esta. Precisa das contagens do painel,
     # que so existem com credencial; sem ela, a classe fica de fora E ISSO E DITO no
     # relatorio, em vez de passar por "nada encontrado".
-    contagens = _contagens_do_painel()
+    contagens = _seguro(_contagens_do_painel, esteira)
     if contagens is None:
         achados.append(_achado(
             "nao_conferido",
