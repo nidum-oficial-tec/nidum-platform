@@ -207,6 +207,8 @@ número bate com a contagem manual, ou o agente declara a margem e por quê.
 enumera só o que está naquela base, e **diz** que o recorte está ativo. Uma resposta
 que silenciosamente incluísse outras bases **reprova**, mesmo estando "mais completa".
 
+**Caso 4-bis — o custo é do recorte, não do acervo.** *"Todas as pendências do jurídico"*. **Aceite:** o agente **filtra antes de ler** — o recorte cobre todas as fichas que casam, e ele **não abre as 92**. **Reprova se ler mais do que o recorte pede**, ainda que a resposta saia certa: uma resposta certa por leitura exaustiva não escala, e passa a falhar sozinha quando o acervo crescer. O que se mede aqui é **quantos documentos foram abertos**, e não apenas o conteúdo da resposta.
+
 **Caso 5 — truncamento é declarado.** Volume acima do orçamento. **Aceite:** devolve o
 que cabe **e diz quanto ficou de fora**. Resposta truncada em silêncio reprova.
 
@@ -216,6 +218,122 @@ a ausência tem de ser visível, senão *"nenhuma pendência"* e *"não conferi"
 iguais.
 
 ---
+
+## O desenho corrigido: a ficha é filtrada antes de lida
+
+**A leitura de "69% do orçamento" estava errada, e o erro era meu.** Aquilo não é
+margem — é contagem regressiva. O acervo cresce a cada rodada; qualquer desenho que
+dependa de **ler todas as fichas** passa de 100% em semanas. **Não é questão de medir
+na E2: é estrutural.**
+
+**O custo de uma resposta tem de ser proporcional ao RECORTE, não ao acervo.** E a
+pergunta já traz o recorte: *"pendências do jurídico"* não precisa de marketing;
+*"decisões de agosto"* não precisa de maio.
+
+Isso muda o que a ficha é. Ela **não existe para ser lida inteira** — existe para ser
+**filtrada antes de lida**, e por isso todo campo de filtro precisa ser legível por
+máquina, com valor padronizado, **na mesma linha do fato**.
+
+### O schema
+
+Uma linha por fato. Sem prosa livre em campo de filtro — se `area` for texto livre,
+o grep não pega, e a ficha volta a só servir para leitura completa.
+
+```
+<!-- ficha: ata | origem: ATA_Reuniao_Nidum_Suprimentos_Fornecedores_17-07-2026.md
+     | data: 2026-07-17 | eco: PROD | participantes: Rachel, Kenji, Sérgio
+     | gerada: 2026-09-06 | esteira v1 -->
+
+- tipo: pendencia | area: jur | data: 2026-07-17 | eco: PROD | resp: Rachel | prazo: 2026-07-24 | ancora: 5. Pontos em aberto para decisão | fato: alçadas e matriz de responsabilidades para cotação e aprovação
+- tipo: pendencia | area: ope | data: 2026-07-17 | eco: PROD | resp: Rachel | prazo: 2026-07-24 | ancora: 6. Próximos passos | fato: realizar votação de agenda e marcar reunião de validação
+- tipo: decisao | area: prod | data: 2026-07-17 | eco: PROD | resp: nao_consta | prazo: nao_consta | ancora: 4. Entendimentos consolidados | fato: a Nidum se estrutura como orquestradora de parceiros, fluxos e padrões
+```
+
+**A ata acima é real** — uma das 92, com 11.623 chars. Ela tem seções numeradas e uma
+tabela `| Ação | Responsável indicado | Prazo / marco |`, que é de onde as duas
+primeiras linhas saem.
+
+| campo | valores |
+|---|---|
+| `tipo` | `decisao` · `pendencia` · `informe` |
+| `area` | vocabulário controlado (abaixo) |
+| `data` | ISO, **repetida em cada linha** — sem isso não dá para filtrar período por grep |
+| `eco` | o ecossistema do carimbo — quem arquivou a reunião |
+| `resp`, `prazo` | valor ou **`nao_consta`**, nunca inferido |
+| `ancora` | seção quando existe; `L<n>` quando não existe |
+| `fato` | único campo em prosa, e é o último da linha |
+
+**`data` e `eco` repetidos por linha não são redundância** — são o que torna o filtro
+possível numa ferramenta que casa **linha**, e não documento. Um campo que só existe
+no cabeçalho da ficha não serve para filtrar fato.
+
+### O vocabulário de `area`: o que já existe, não um novo
+
+**Proposta: as 17 siglas de `ecossistemas.json`, em caixa baixa**, mais `nao_consta`.
+É a taxonomia oficial da Governança de Dados v2, já versionada, e que **só muda por
+PR revisado**. Inventar uma segunda lista criaria duas taxonomias que precisam
+concordar — e a que envelhece é sempre a nova.
+
+`aca` · `bra` · `cc` · `ce` · `ct` · `cvi` · `fan` · `fin` · `fonte` · `jur` · `mkt` ·
+`mun` · `ope` · `prod` · `reg` · `sus` · `tec` · `nao_consta`
+
+**Medido nos 92, e o resultado justifica a extração por item:** o prefixo do nome do
+arquivo cobre 60 deles com sigla válida (PROD 11, BRA 9, MKT 9, ACA 6, MUN 6, TEC 5,
+CVI 4, FAN 4, OPE 4, SUS 2) e **32 não mapeiam** — `ATA` (10), `GER` (8), `PROJ` (7),
+`RECAP`, `NIDUM`, `CTE`, e 4 sem prefixo.
+
+Mais decisivo: **`jur` e `fin` não aparecem como prefixo em nenhuma das 92.** Se
+`area` viesse do nome do arquivo, *"pendências do jurídico"* devolveria **zero** — e
+as pendências jurídicas existem, dentro de reuniões arquivadas sob PROD e TEC. É a
+prova de que `area` é **do item**, e não do arquivo.
+
+### O filtro, com a ferramenta que já existe
+
+*"Todas as pendências do jurídico"* vira:
+
+```
+grep_knowledge_files("tipo: pendencia \| area: jur")
+```
+
+E — este é o ponto — **`grep_knowledge_files` devolve as LINHAS que casaram, com o
+id do arquivo, e não os arquivos.** O agente recebe as pendências jurídicas em si.
+**Ele não lê as 92 fichas; não lê ficha nenhuma.** O custo passa a ser proporcional
+ao número de linhas que casaram — exatamente o recorte.
+
+Daí ele abre **só as atas que a âncora indicar**, se precisar citar o registro humano.
+
+Outros recortes, sem ferramenta nova:
+
+| pergunta | filtro |
+|---|---|
+| decisões de agosto | `tipo: decisao \| .* data: 2026-08` |
+| pendências sem responsável | `tipo: pendencia \| .* resp: nao_consta` |
+| tudo de operações | `area: ope` |
+| pendências vencidas do jurídico | `tipo: pendencia \| area: jur` + o modelo compara `prazo` |
+
+### O que muda na etapa 3, e quando `consultar_fatos` volta a ser necessário
+
+**Você está certo: a E3 deixa de ser ferramenta e vira schema + grep + instrução no
+system prompt.** E o gatilho para ela voltar tem número.
+
+**`MAX_GREP_RESULTS = 50`** (`builtin.py:1772`). O grep devolve no máximo 50 linhas
+e **declara o truncamento**: `[50 of N matches shown — use file_id to narrow]`.
+
+Isso responde as três capacidades que você perguntou:
+
+- **Contagem** — o grep tem `count_only`, e o modelo soma sobre as linhas devolvidas.
+  **Basta**, até 50.
+- **Ordenação por data** — basta, porque `data` está **em cada linha**. Sem isso não
+  bastaria, e é por isso que o campo se repete.
+- **Agregação** ("quantas pendências por área") — basta sobre as linhas devolvidas.
+
+**O que o grep não faz é enumerar acima de 50.** Ele não mente — declara —, mas
+declarar não é enumerar, e a pergunta da Fase D é justamente *"todas"*.
+
+**Então `consultar_fatos` é necessário exatamente quando um recorte típico passa de
+50 linhas** — e isso é mensurável assim que a E1 existir, contando quantas
+pendências jurídicas as 92 produzem. Abaixo de 50, ele não acrescenta nada que o
+grep não faça; acima, ele deixa de ser otimização e vira requisito.
 
 ## As três perguntas do desenho
 
@@ -305,6 +423,25 @@ entre derivado e cópia:
   o comportamento certo.
 - **Ficha nunca entra no `_arquivo/`.** Derivado não se arquiva: se a ata voltar, a
   ficha se regenera; se não voltar, a ficha não serve para nada.
+
+## Premissas aceitas (05/09/2026)
+
+Decididas pelo Davi e fechadas — **não reabrir sem fato novo**:
+
+1. **Ata sem ficha não para a rodada.** Falha de geração vira linha no livro-caixa e
+   item na Issue; a ata entra e continua buscável. Parar por falha de um derivado
+   seria a via 3 do D28 auto-infligida. O Caso 6 impede que vire buraco silencioso.
+2. **Âncora por item é requisito, não enfeite.** A ficha é **índice, não fonte**: o
+   agente cita a ata, e a âncora é o que permite isso sem ler o documento inteiro.
+   A IA nunca origina número — só organiza e mostra a conta.
+3. **A competição da ficha com a ata na busca semântica se mede antes de decidir.**
+   Para pergunta aberta, a ficha é a resposta errada — tem os fatos e perdeu a
+   discussão. Entre "tirar a ficha do índice semântico" e "marcá-la no texto",
+   a E2 mede o que foi citado antes de escolher.
+4. **A ficha é filtrada antes de lida.** O custo de uma resposta é proporcional ao
+   recorte, nunca ao acervo. Desenho que dependa de ler todas as fichas está
+   descartado — não por ser caro hoje, mas por deixar de caber sozinho conforme o
+   acervo cresce.
 
 ## O que este levantamento não decide
 
