@@ -3146,8 +3146,17 @@ def _f3_partes_nome(nome):
 
 
 def _f3_colecao(nome):
-    top = (nome or "").split(">", 1)[0].strip()
-    return "FONTE" if top.upper() == "FONTE" else "ACERVOS"
+    # A pasta da doutrina tem DUAS grafias vivas: "FONTE" (nome no repo da esteira
+    # hoje) e "1 - Fonte" (nome da reformulacao do SharePoint, 03/09/2026).
+    # LE O NOME DO ARQUIVO, que a esteira monta com o CAMINHO DO REPO
+    # ("FONTE > x.md"). Consequencia que nao e obvia: renomear a COLECAO nao afeta
+    # esta funcao - o que a afeta e renomear a PASTA do repo. Aceitar as duas
+    # grafias impede que a migracao do eixo (base = pasta-mae) quebre o piso da
+    # Fonte em silencio: sem erro, sem log, so a doutrina deixando de ser doutrina.
+    # Declarado em esteira/teste_pastas_soberanas.py (dependencia FONTE, com
+    # "1 - Fonte" nas alternativas) - a guarda avisa se as DUAS sumirem.
+    top = (nome or "").split(">", 1)[0].strip().upper()
+    return "FONTE" if top in ("FONTE", "1 - FONTE") else "ACERVOS"
 
 
 def _f3_regras_tipo(mapa):
