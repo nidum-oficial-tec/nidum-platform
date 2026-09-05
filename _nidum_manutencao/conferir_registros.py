@@ -206,27 +206,39 @@ def conferir_frac_catastrofe(valor):
 
 
 def conferir_bases_vazias(contagens, devem_ficar_vazias):
-    """Base que nao devia receber arquivo esta recebendo?
+    """Existe base para uma pasta-mae DECLARADA como excluida, e com conteudo?
 
-    E o unico sintoma OBSERVAVEL de um roteamento errado. Pasta-mae declarada
-    como excluida nao tem base; se a base correspondente aparece com conteudo,
-    ou a declaracao foi ignorada ou alguem criou um caminho novo sem dizer.
-    Nenhum dos dois da erro - o arquivo simplesmente passa a existir num lugar
-    onde ninguem o procura, que e a definicao de vazamento silencioso.
+    O DEFEITO QUE ESTA FUNCAO JA TEVE, e que e a licao mais cara do conferidor:
+    a primeira versao procurava os nomes das pastas excluidas dentro das contagens
+    das colecoes CONFIGURADAS. Pasta excluida nao tem colecao configurada - por
+    construcao. A intersecao era sempre vazia, a comparacao era sempre zero contra
+    zero, e o resultado era VERDE PERMANENTE SEM COBERTURA NENHUMA.
 
-    Base AUSENTE da contagem nao acusa: nao existir e o estado esperado dela.
+    Nao havia como notar lendo: o codigo esta certo, o teste passa (com fixtures
+    que colocam o nome nos dois lados), e o relatorio diz "nada encontrado". So
+    rodar contra dado real DESCONFIANDO DO VERDE pega - foi assim que apareceu.
+
+    Agora as contagens trazem TODAS as colecoes do painel, inclusive as criadas
+    fora do config, que sao exatamente o caso que a classe deveria pegar. A
+    comparacao e por nome normalizado, para uma base "Financas" e outra
+    "Finan\u00e7as" nao escaparem por acento.
     """
     achados = []
-    for nome in devem_ficar_vazias:
-        n = (contagens or {}).get(nome)
+    por_nome = {_fold(k).lower(): (k, v) for k, v in (contagens or {}).items()}
+    for pasta in devem_ficar_vazias:
+        chave = _fold(pasta).lower()
+        if chave not in por_nome:
+            continue                       # nao existe base para ela: o esperado
+        nome_real, n = por_nome[chave]
         if not n:
-            continue
+            continue                       # existe e esta vazia: aceitavel
         achados.append(_achado(
             "base_indevida",
-            "base %r tem %d arquivo(s) e deveria estar vazia" % (nome, n),
+            "base %r tem %d arquivo(s) e a pasta-mae dela esta DECLARADA como "
+            "excluida" % (nome_real, n),
             "painel do ChatND",
-            "a pasta-mae correspondente esta declarada como excluida. Arquivo ali "
-            "e recuperavel por qualquer usuario numa busca, sem que nada acuse."))
+            "arquivo ali e recuperavel por qualquer usuario numa busca, sem que "
+            "nada acuse - e a declaracao de exclusao passa a ser mentira"))
     return achados
 
 
@@ -294,6 +306,20 @@ def _contagens_do_painel(esteira):
             base + caminho, headers={"Authorization": "Bearer " + chave})
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read().decode())
+
+    # TODAS as colecoes do painel, e nao so as declaradas no config. Contar so as
+    # configuradas era o que tornava a classe cega: base criada fora do config -
+    # justamente o caso que ela deveria pegar - nao aparecia na conta.
+    try:
+        catalogo = _pegar("/api/v1/knowledge/")
+    except Exception:
+        catalogo = None
+    conhecidas = {}
+    for k in (catalogo or []):
+        if isinstance(k, dict) and k.get("id"):
+            conhecidas[str(k["id"]).strip()] = (k.get("name") or "").strip()
+    for cid, nome in conhecidas.items():
+        colecoes.setdefault(nome or cid, {"id": cid})
 
     out = {}
     for nome, info in colecoes.items():
