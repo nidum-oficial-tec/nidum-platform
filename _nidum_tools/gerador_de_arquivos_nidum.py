@@ -543,8 +543,18 @@ def _brand_css():
         ]
     )
     rules = (
-        ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;"
-        "--cinza:#9D9890;--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;}"
+    # PALETA: os SEIS nomes oficiais do brandbook sao os canonicos; os antigos
+    # viram ALIAS apontando para eles (--creme -> var(--areia) e assim por diante).
+    # Alias, e nao troca seca, porque estes CSS ja sairam em arquivos que estao no
+    # SharePoint e em caixas de e-mail: um .html gerado em agosto continua abrindo
+    # com --creme, e quebrar isso seria estragar entrega passada para arrumar nome.
+    # PRAZO: revisar em 2026-12 - se nenhuma regra nova usar os antigos ate la, os
+    # aliases saem e ficam so os seis. Quem revisar: procure "--creme" e "--azul"
+    # no repo; zero ocorrencias fora deste bloco = pode remover.
+        ":root{--areia:#E5E0D5;--pedra:#9D9890;--terracota:#9A4A2E;"
+        "--ceu:#4F7187;--musgo:#515E52;--escuro:#1F1E1B;"
+        "--creme:var(--areia);--cinza:var(--pedra);--azul:var(--ceu);"
+        "--verde:var(--musgo);--preto:var(--escuro);--cremealt:var(--areia);}"
         "*{box-sizing:border-box}"
         "html{background:#E5E0D5}"
         "body{background:#E5E0D5;color:#1F1E1B;"
@@ -798,8 +808,14 @@ def _logo_b64(cor):
 
 DECK_CSS = (
     "*{box-sizing:border-box;margin:0;padding:0}"
-    ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;--cinza:#9D9890;"
-    "--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;--rn:26px;"
+    # Mesma paleta do bloco acima (nomes oficiais + alias). Os dois blocos sao
+    # copias por desenho - CSS embutido em arquivo entregue nao pode depender de
+    # import; se um mudar, o outro muda junto. O teste afirma que sao iguais.
+    ":root{--areia:#E5E0D5;--pedra:#9D9890;--terracota:#9A4A2E;"
+    "--ceu:#4F7187;--musgo:#515E52;--escuro:#1F1E1B;"
+    "--creme:var(--areia);--cinza:var(--pedra);--azul:var(--ceu);"
+    "--verde:var(--musgo);--preto:var(--escuro);--cremealt:var(--areia);"
+    "--rn:26px;"
     "--sc:0 26px 70px rgba(31,30,27,.34)}"
     "html,body{height:100%;background:#1F1E1B;"
     "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
