@@ -1,0 +1,447 @@
+# -*- coding: ascii -*-
+"""
+Confere se a DOCUMENTACAO e as FIXTURES descrevem o que o codigo e o repo tem.
+
+SO-LEITURA. Nao altera nada, nao chama a API, nao precisa de credencial.
+
+POR QUE EXISTE
+==============
+Em 03/09/2026 achamos QUATORZE registros descrevendo coisas revogadas ou
+apagadas - valves que nao existem, ids de colecao apagada, um wrapper revogado,
+e fixtures de teste usando caminhos que a reformulacao das pastas renomeou. Os
+dois ultimos apareceram POR ACASO, no meio de outra tarefa.
+
+A origem e comum e esta no D24: configuracao mora no BANCO, e renomear uma pasta
+ou revogar um modelo nao deixa rastro em commit. A REGRA DA DOC resolve a
+defasagem codigo -> doc, porque ali existe um PR que forca a conferencia. Nao ha
+nada equivalente para painel -> doc nem para repo -> fixture.
+
+E o custo nao e teorico: o mapa de assuntos ficou com 9 de 19 caminhos mortos
+por semanas, com o DIAL_FASE3 ligado, e a etiqueta de assunto valendo zero. A
+suite ficava VERDE porque as fixtures descreviam o mundo antigo.
+
+O QUE ELE CONFERE (cinco classes, cada uma de um caso real)
+==========================================================
+  valve_fantasma        doc descreve valve que nao existe no codigo
+  valve_nao_documentada valve existe no codigo e falta na doc
+  default_divergente    doc e codigo discordam do valor default
+  id_fantasma           doc cita id de colecao que nao esta no sync_config
+  fixture_vencida       fixture usa caminho de pasta que nao existe no repo
+
+O QUE ELE NAO CONFERE
+=====================
+Estado de PAINEL (valve efetiva, modelo ativo, colecao existente) exige
+credencial e fica fora de proposito: este roda em CI, sem segredo. A parte de
+painel e o `diagnostico_modelos.py`, que ja existe e pede NIDUM_URL/NIDUM_TOKEN.
+
+USO
+===
+  py _nidum_manutencao/conferir_registros.py
+  py _nidum_manutencao/conferir_registros.py --esteira ../esteira-conhecimento
+
+Sai 1 quando ha achados - serve de portao em CI.
+"""
+
+import argparse
+import io
+import json
+import os
+import re
+import sys
+import unicodedata
+
+_AQUI = os.path.dirname(os.path.abspath(__file__))
+_PLATAFORMA = os.path.dirname(_AQUI)
+_ESTEIRA_PADRAO = os.path.join(os.path.dirname(_PLATAFORMA), "esteira-conhecimento")
+
+# Valves que a doc descreve de proposito sem existirem como Field (secoes de
+# ambiente, nao de valve). Vazio hoje - existe para o dia em que houver excecao
+# legitima, e para que a excecao seja ESCRITA em vez de silenciosa.
+_VALVE_IGNORAR = set()
+
+
+def _fold(s):
+    s = unicodedata.normalize("NFD", str(s or "").strip())
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
+def _ler(caminho):
+    try:
+        return io.open(caminho, encoding="utf-8", errors="replace").read()
+    except Exception:
+        return ""
+
+
+def _arquivos(raiz, sufixo, dentro=None):
+    saida = []
+    if not os.path.isdir(raiz):
+        return saida
+    for base, dirs, arqs in os.walk(raiz):
+        dirs[:] = [d for d in dirs if not d.startswith((".", "__"))]
+        if dentro and dentro not in base.replace(os.sep, "/"):
+            continue
+        for a in arqs:
+            if a.endswith(sufixo):
+                saida.append(os.path.join(base, a))
+    return saida
+
+
+def _achado(classe, detalhe, onde, consequencia):
+    return {"classe": classe, "detalhe": detalhe, "onde": onde,
+            "consequencia": consequencia}
+
+
+# ---------------------------------------------------------------------------
+# Extracao
+# ---------------------------------------------------------------------------
+_RE_VALVE_CODIGO = re.compile(
+    r"^\s{4,}([A-Z][A-Z0-9_]{2,}):\s*[\w\[\], |]+\s*=\s*Field\(\s*default\s*=\s*([^,)]+)",
+    re.M)
+# Linha de tabela de doc: | `NOME` | descricao | `default` | producao |
+_RE_VALVE_DOC = re.compile(
+    r"^\|\s*`([A-Z][A-Z0-9_]{2,})`\s*\|[^|]*\|\s*([^|]*?)\s*\|", re.M)
+_RE_UUID8 = re.compile(r"\b([0-9a-f]{8})(?:[0-9a-f-]{0,28})\b")
+_RE_CAMINHO_FIXTURE = re.compile(r'"([A-Za-zA-y][^"\n]*?/[^"\n]*?\.md)"')
+
+
+def _valves_do_codigo(raiz):
+    achadas = {}
+    for arq in _arquivos(os.path.join(raiz, "_nidum_tools"), ".py"):
+        if os.path.basename(arq).startswith("teste_"):
+            continue
+        for nome, bruto in _RE_VALVE_CODIGO.findall(_ler(arq)):
+            achadas.setdefault(nome, _limpar_default(bruto))
+    return achadas
+
+
+def _limpar_default(bruto):
+    v = (bruto or "").strip().strip('"').strip("'").strip()
+    return v
+
+
+def _valves_da_doc(raiz):
+    achadas = {}
+    for arq in _arquivos(os.path.join(raiz, "_nidum_docs"), ".md"):
+        if "04_" not in os.path.basename(arq) and "Dicionario" not in arq:
+            continue
+        for nome, default in _RE_VALVE_DOC.findall(_ler(arq)):
+            achadas.setdefault(nome, (_limpar_default(default.strip("`")), arq))
+    return achadas
+
+
+def _ids_do_config(esteira):
+    ids = set()
+    caminho = os.path.join(esteira, "_scripts", "sync_config.json")
+    try:
+        cfg = json.loads(_ler(caminho))
+    except Exception:
+        return ids
+    def _colher(d):
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if k == "id" and isinstance(v, str):
+                    ids.add(v.strip().lower()[:8])
+                else:
+                    _colher(v)
+        elif isinstance(d, list):
+            for x in d:
+                _colher(x)
+    _colher(cfg)
+    return ids
+
+
+def _pastas_do_repo(esteira):
+    pastas = set()
+    if not os.path.isdir(esteira):
+        return pastas
+    for base, dirs, _a in os.walk(esteira):
+        dirs[:] = [d for d in dirs if not d.startswith((".", "_"))]
+        rel = os.path.relpath(base, esteira).replace(os.sep, "/")
+        if rel != ".":
+            pastas.add(_fold(rel))
+    return pastas
+
+
+# ---------------------------------------------------------------------------
+# Conferencia
+# ---------------------------------------------------------------------------
+FRAC_CATASTROFE_DESENHO = 0.25
+
+
+def conferir_frac_catastrofe(valor):
+    """O freio proporcional voltou ao valor de desenho?
+
+    Nasce do plano de migracao do eixo: a rodada B sobe FRAC_CATASTROFE para 0,35
+    porque 34 remocoes em 109 arquivos (31,2%) disparam CATASTROFE, que bloqueia
+    ate confirmada. Subir e legitimo; ESQUECER DE VOLTAR nao da erro nenhum - o
+    freio simplesmente deixa de proteger, e quem descobre e a proxima remocao em
+    massa que passa batido.
+
+    Acusa nos DOIS sentidos. Valor mais apertado que o desenho tambem e
+    divergencia: ele bloqueia rodadas legitimas, e a reacao previsivel de quem
+    apanha de um freio apertado demais e afrouxa-lo sem medir.
+
+    Ausente nao acusa: sem variavel, vale o padrao do codigo, que ja e 0,25.
+    """
+    if valor is None or str(valor).strip() == "":
+        return []
+    try:
+        atual = float(str(valor).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return [_achado(
+            "frac_catastrofe",
+            "FRAC_CATASTROFE ilegivel: %r" % valor,
+            "variavel de repositorio da esteira",
+            "valor que nao e numero faz o freio cair no padrao sem ninguem saber "
+            "qual protecao esta valendo.")]
+    if abs(atual - FRAC_CATASTROFE_DESENHO) < 1e-9:
+        return []
+    return [_achado(
+        "frac_catastrofe",
+        "FRAC_CATASTROFE = %s (o desenho e %s)" % (atual, FRAC_CATASTROFE_DESENHO),
+        "variavel de repositorio da esteira",
+        "acima do desenho, o freio de catastrofe deixa passar remocao em massa que "
+        "deveria barrar; abaixo, bloqueia rodada legitima e ensina a afrouxa-lo. "
+        "Se foi a migracao que subiu, o passo 8 do plano manda restaurar.")]
+
+
+def conferir_bases_vazias(contagens, devem_ficar_vazias):
+    """Base que nao devia receber arquivo esta recebendo?
+
+    E o unico sintoma OBSERVAVEL de um roteamento errado. Pasta-mae declarada
+    como excluida nao tem base; se a base correspondente aparece com conteudo,
+    ou a declaracao foi ignorada ou alguem criou um caminho novo sem dizer.
+    Nenhum dos dois da erro - o arquivo simplesmente passa a existir num lugar
+    onde ninguem o procura, que e a definicao de vazamento silencioso.
+
+    Base AUSENTE da contagem nao acusa: nao existir e o estado esperado dela.
+    """
+    achados = []
+    for nome in devem_ficar_vazias:
+        n = (contagens or {}).get(nome)
+        if not n:
+            continue
+        achados.append(_achado(
+            "base_indevida",
+            "base %r tem %d arquivo(s) e deveria estar vazia" % (nome, n),
+            "painel do ChatND",
+            "a pasta-mae correspondente esta declarada como excluida. Arquivo ali "
+            "e recuperavel por qualquer usuario numa busca, sem que nada acuse."))
+    return achados
+
+
+def codigo_de_saida(achados):
+    """2 = achou (RESULTADO), 0 = limpo, 1 fica reservado para FALHA do script.
+
+    Mesma convencao do orfaos_indice.py, e pela mesma razao: relatorio que fica
+    vermelho ao cumprir a funcao treina todo mundo a ignorar o vermelho (D30).
+    """
+    return 2 if achados else 0
+
+def conferir(plataforma=None, esteira=None):
+    plataforma = plataforma or _PLATAFORMA
+    esteira = esteira or _ESTEIRA_PADRAO
+    achados = []
+
+    codigo = _valves_do_codigo(plataforma)
+    doc = _valves_da_doc(plataforma)
+
+    # A - doc descreve valve que nao existe
+    for nome, (_default, arq) in sorted(doc.items()):
+        if nome in _VALVE_IGNORAR or nome in codigo:
+            continue
+        achados.append(_achado(
+            "valve_fantasma",
+            "a doc descreve a valve %s, que nao existe no codigo" % nome,
+            os.path.relpath(arq, plataforma),
+            "quem le a doc procura no painel uma valve que nao esta la; e quem "
+            "mexe no codigo nao encontra o que a doc promete"))
+
+    # B - valve existe e nao esta documentada
+    for nome in sorted(codigo):
+        if nome in _VALVE_IGNORAR or nome in doc:
+            continue
+        achados.append(_achado(
+            "valve_nao_documentada",
+            "a valve %s existe no codigo e nao esta no dicionario" % nome,
+            "_nidum_tools/",
+            "valve sem doc so e descoberta lendo o codigo - e o valor efetivo "
+            "dela mora no banco (D24)"))
+
+    # C - default divergente
+    for nome, (default_doc, arq) in sorted(doc.items()):
+        if nome not in codigo or not default_doc:
+            continue
+        d_doc = _fold(default_doc).strip(". ")
+        d_cod = _fold(codigo[nome]).strip(". ")
+        if d_doc.startswith("`"):
+            d_doc = d_doc.strip("`")
+        if d_doc and d_cod and d_doc != d_cod and not d_doc.endswith("..."):
+            achados.append(_achado(
+                "default_divergente",
+                "%s: a doc diz default %r, o codigo diz %r"
+                % (nome, default_doc, codigo[nome]),
+                os.path.relpath(arq, plataforma),
+                "a doc contradiz o codigo sobre um valor - e o efetivo esta no "
+                "banco, entao os dois podem estar errados ao mesmo tempo"))
+
+    # D - id de colecao citado na doc e ausente do config da esteira
+    ids_config = _ids_do_config(esteira)
+    if ids_config:
+        for arq in _arquivos(os.path.join(plataforma, "_nidum_docs"), ".md"):
+            nome_arq = os.path.basename(arq)
+            # 07_Diario e registro HISTORICO por desenho - id velho la e correto
+            if nome_arq.startswith("07_"):
+                continue
+            texto = _ler(arq)
+            for curto in sorted(set(_RE_UUID8.findall(texto))):
+                if curto in ids_config:
+                    continue
+                achados.append(_achado(
+                    "id_fantasma",
+                    "a doc cita o id de colecao %s..., que nao esta no "
+                    "sync_config da esteira" % curto,
+                    os.path.relpath(arq, plataforma),
+                    "id de colecao muda e some; doc que cita id morto manda o "
+                    "leitor para uma colecao que nao existe"))
+
+    # E - fixture com caminho de pasta inexistente
+    pastas = _pastas_do_repo(esteira)
+    if pastas:
+        for raiz in (os.path.join(plataforma, "_nidum_tools"),
+                     os.path.join(esteira, "_scripts")):
+            for arq in _arquivos(raiz, ".py"):
+                if not os.path.basename(arq).startswith("teste_"):
+                    continue
+                for caminho in set(_RE_CAMINHO_FIXTURE.findall(_ler(arq))):
+                    pasta = "/".join(caminho.split("/")[:-1])
+                    if not pasta:
+                        continue
+                    pf = _fold(pasta)
+                    if pf in pastas or any(p.startswith(pf + "/") for p in pastas):
+                        continue
+                    # SO CONTA FIXTURE QUE UM DIA FOI REAL. A primeira versao
+                    # acusava 21 caminhos, e quase todos eram sinteticos de
+                    # proposito: "x/y.md", "K/X.md", "QUALQUER/x.md", e ate a
+                    # linha de documentacao "sigla valida -> <SIGLA>/<stem>.md".
+                    # Fixture sintetica NAO envelhece - ela nunca descreveu o
+                    # mundo, entao nao pode divergir dele.
+                    #
+                    # O criterio: o PRIMEIRO segmento tem de existir hoje no repo.
+                    # Ai o achado significa "a pasta-mae continua ali e o caminho
+                    # abaixo dela mudou", que e exatamente o caso do mapa de
+                    # assuntos - 9 de 19 caminhos mortos por renomeacao interna.
+                    #
+                    # PONTO CEGO ASSUMIDO: fixture cuja pasta-mae INTEIRA sumiu
+                    # (as de "ACERVOS/", da epoca do roteamento antigo) passa
+                    # batida. E deliberado - separar essas das sinteticas exigiria
+                    # historia do git, e um alarme que dispara 21 vezes com 2
+                    # verdadeiros e desligado na primeira semana. Prefiro pegar
+                    # menos e ser lido.
+                    topo = pf.split("/")[0]
+                    if topo not in {x.split("/")[0] for x in pastas}:
+                        continue
+                    achados.append(_achado(
+                        "fixture_vencida",
+                        "a fixture usa o caminho %r, cuja pasta nao existe no "
+                        "repo" % caminho,
+                        os.path.basename(arq),
+                        "a suite fica VERDE testando uma forma que a producao "
+                        "nao produz - confianca falsa, e foi assim que o mapa "
+                        "de assuntos ficou morto por semanas"))
+    return achados
+
+
+_TITULOS = {
+    "valve_fantasma": "Valves que a doc descreve e o codigo nao tem",
+    "valve_nao_documentada": "Valves do codigo que a doc nao descreve",
+    "default_divergente": "Defaults em que a doc e o codigo discordam",
+    "id_fantasma": "Ids de colecao citados na doc e ausentes do config",
+    "fixture_vencida": ("Fixtures apontando para pasta que nao existe "
+                        "(LISTA PARA REVISAO: parte pode ser sintetica)"),
+}
+
+
+def relatar(achados):
+    if not achados:
+        print("CONFERIR REGISTROS: nada divergente. Doc, codigo, config e "
+              "fixtures descrevem a mesma realidade.")
+        return 0
+    por_classe = {}
+    for a in achados:
+        por_classe.setdefault(a["classe"], []).append(a)
+    print("CONFERIR REGISTROS: %d divergencia(s) em %d classe(s)."
+          % (len(achados), len(por_classe)))
+    print("Nenhuma quebra nada agora - e esse o problema: elas so aparecem "
+          "quando alguem tropeca.\n")
+    for classe in _TITULOS:
+        itens = por_classe.get(classe)
+        if not itens:
+            continue
+        print("== %s (%d) ==" % (_TITULOS[classe], len(itens)))
+        print("   consequencia: %s" % itens[0]["consequencia"])
+        for a in itens:
+            print("   - [%s] %s" % (a["onde"], a["detalhe"]))
+        print("")
+    return 1
+
+
+def nota_markdown(achados):
+    """O relatorio no formato de Nota da plataforma.
+
+    GRAVA EM ARQUIVO, nao publica. Publicar exigiria credencial de escrita, e um
+    conferidor que escreve na plataforma deixa de ser conferidor: verificacao que
+    altera estado nao e verificacao (D28). Quem importa a Nota e o Davi.
+
+    A Nota abre pelo que MUDOU desde a ultima leitura - contagem por classe -
+    porque a lista inteira e longa demais para ser lida toda vez, e uma lista que
+    nao se le nao protege ninguem.
+    """
+    import collections
+    por_classe = collections.Counter(a["classe"] for a in achados)
+    L = ["# Conferencia de registros", ""]
+    if not achados:
+        L += ["Nenhuma divergencia entre a documentacao, as fixtures e o que o "
+              "codigo e o repositorio tem.", ""]
+        return chr(10).join(L)
+    L += ["| classe | achados |", "|---|---:|"]
+    for classe, n in por_classe.most_common():
+        L.append("| `%s` | %d |" % (classe, n))
+    L.append("")
+    for classe, _n in por_classe.most_common():
+        L += ["## %s" % _TITULOS.get(classe, classe), ""]
+        primeiro = True
+        for a in achados:
+            if a["classe"] != classe:
+                continue
+            if primeiro:
+                L += ["> %s" % a["consequencia"], ""]
+                primeiro = False
+            L.append("- **%s** - %s" % (a["onde"], a["detalhe"]))
+        L.append("")
+    return chr(10).join(L)
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Confere doc/fixtures contra codigo e repo (so-leitura).")
+    ap.add_argument("--plataforma", default=_PLATAFORMA)
+    ap.add_argument("--esteira", default=_ESTEIRA_PADRAO)
+    ap.add_argument("--nota", default="",
+                    help="grava o relatorio em Markdown, no formato de Nota da "
+                         "plataforma (nao publica: a importacao e manual)")
+    args = ap.parse_args(argv)
+    if not os.path.isdir(args.esteira):
+        print("AVISO: repo da esteira nao encontrado em %r - as classes "
+              "'id_fantasma' e 'fixture_vencida' ficam de fora." % args.esteira)
+    achados = conferir(args.plataforma, args.esteira)
+    relatar(achados)
+    if args.nota:
+        io.open(args.nota, "w", encoding="utf-8", newline=chr(10)).write(
+            nota_markdown(achados))
+        print("Nota gravada em %s (importar na plataforma e acao do Davi)." % args.nota)
+    # 2 = ACHOU (resultado, nao falha). Ver codigo_de_saida.
+    return codigo_de_saida(achados)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
