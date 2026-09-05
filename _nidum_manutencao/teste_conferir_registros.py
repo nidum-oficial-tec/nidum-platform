@@ -69,20 +69,30 @@ def main():
     check("lixo nao quebra o conferidor",
           isinstance(CR.conferir_frac_catastrofe("abacaxi"), list))
 
-    print("\n== base que nao devia receber arquivo ==")
-    contagens = {"Produtos": 140, "Financas": 0, "Plataformas Regionais": 0}
-    vazias = ["Financas", "Plataformas Regionais"]
-    check("todas as excluidas em zero -> nada a relatar",
-          CR.conferir_bases_vazias(contagens, vazias) == [])
-    ruim = dict(contagens, **{"Financas": 3})
-    a = CR.conferir_bases_vazias(ruim, vazias)
-    check("excluida com 3 arquivos -> ACUSA", len(a) == 1)
+    print("")
+    print("== base que nao devia receber arquivo ==")
+    # O CASO QUE A VERSAO ANTIGA NAO PEGAVA, e que nenhum teste pegaria enquanto
+    # as fixtures colocassem o mesmo nome nos dois lados: as contagens vinham SO
+    # das colecoes configuradas, e pasta excluida nao tem colecao configurada. A
+    # intersecao era vazia por construcao - zero contra zero, verde permanente.
+    # Estas fixtures imitam o mundo real: as contagens trazem TODAS as colecoes do
+    # painel, inclusive uma criada fora do config.
+    do_painel = {"Produtos": 141, "Financas": 3, "Tecnologia": 107}
+    excluidas = ["0 - Comece por aqui", "4 - Pastas de Trabalho", "Financas"]
+    a = CR.conferir_bases_vazias(do_painel, excluidas)
+    check("base criada FORA do config, com conteudo -> ACUSA", len(a) == 1)
     check("o achado NOMEIA a base", "Financas" in str(a))
     check("e diz quantos", "3" in str(a))
-    check("base que nao esta na lista de vazias e ignorada",
-          CR.conferir_bases_vazias({"Produtos": 140}, vazias) == [])
-    check("base vazia AUSENTE da contagem nao acusa (ainda nao criada)",
-          CR.conferir_bases_vazias({"Produtos": 1}, ["Financas"]) == [])
+    check("excluida SEM base nenhuma -> silencio (o esperado)",
+          CR.conferir_bases_vazias({"Produtos": 141}, excluidas) == [])
+    check("excluida com base VAZIA -> silencio (aceitavel)",
+          CR.conferir_bases_vazias({"Financas": 0}, excluidas) == [])
+    check("base legitima com conteudo -> silencio",
+          CR.conferir_bases_vazias({"Produtos": 141}, ["Financas"]) == [])
+    # Acento: "Financas" no config e "Financas" com cedilha no painel sao a mesma
+    # pasta, e escapar por acento seria a mesma cegueira por outra porta.
+    check("acento nao faz a base escapar",
+          len(CR.conferir_bases_vazias({u"Finan\u00e7as": 3}, ["Financas"])) == 1)
 
     print("\n== o formato do achado e o mesmo das classes antigas ==")
     a = CR.conferir_frac_catastrofe("0.35")[0]
