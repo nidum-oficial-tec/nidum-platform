@@ -82,7 +82,7 @@ Configuráveis ao vivo via `POST /api/v1/functions/id/chatnd/valves/update`.
 | `GERADOR_MODEL` | Modelo que monta a estrutura de arquivos | `gpt-5.1` | idem |
 | `TOOL_ID` | Id da ferramenta de arquivos | `gerador_de_arquivos_nidum` | idem |
 | `MODELO_RAPIDO` | Motor da rota rápido | `nidum-10---rpido` | idem |
-| `MODELO_DIADIA` | Motor da rota dia a dia | `nidum-10---dia-a-dia` | idem |
+| `MODELO_DIADIA` | Motor da rota dia a dia | `nidum-10---dia-a-dia` — **= “Nidum 1.0 - Geral”** (renomeado no painel; o id não mudou) | idem |
 | `MODELO_DOCUMENTOS` | Motor da rota documentos | `nidum-10---documentos` | idem |
 | `MODELO_RACIOCINIO` | Motor da rota raciocínio | `nidum-20---raciocinio` | idem |
 | `BASE_CONHECIMENTO_ID` | Base de conhecimento (RAG) | **vazio** — o default morto foi removido; o id vivo mora no painel | ⚠️ **as DUAS coleções citadas aqui (`f2c8a48c` e `a85d8a8f`) foram apagadas** por decisão de produto. O `MAPA_COLECOES` substituiu esta valve. |

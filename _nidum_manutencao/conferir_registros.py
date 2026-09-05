@@ -346,6 +346,63 @@ def _contagens_do_painel(esteira):
     return out, None
 
 
+_RE_ID_MODELO = re.compile(r"`(nidum-[a-z0-9-]+)`")
+
+
+def _modelos_do_painel():
+    """{id do modelo: nome de exibicao} do painel, ou None sem credencial."""
+    base = os.environ.get("OPENWEBUI_BASE_URL")
+    chave = os.environ.get("OPENWEBUI_API_KEY")
+    if not base or not chave:
+        return None, "faltam OPENWEBUI_BASE_URL/OPENWEBUI_API_KEY neste ambiente"
+    import urllib.request
+    req = urllib.request.Request(base.rstrip("/") + "/api/v1/models/",
+                                 headers={"Authorization": "Bearer " + chave})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            dados = json.loads(r.read().decode())
+    except Exception as e:
+        return None, "a base nao respondeu a /api/v1/models/ (%s)" % str(e)[:60]
+    out = {}
+    for m in (dados or []):
+        if isinstance(m, dict) and m.get("id"):
+            out[str(m["id"]).strip()] = (m.get("name") or "").strip()
+    return out, None
+
+
+def conferir_modelos_renomeados(citados, do_painel):
+    """Id de modelo citado na doc x NOME DE EXIBICAO atual no painel.
+
+    A DIVERGENCIA QUE ENGANOU TRES PESSOAS (D39): `nidum-10---dia-a-dia` foi
+    RENOMEADO para "Nidum 1.0 - Geral", e o id ficou. Tres leituras diferentes
+    concluiram "modelo revogado" a partir do nome fossilizado no id, e o caso
+    entrou em tres listas de pendencia com tres opcoes de conserto - quando a
+    resposta era abrir uma tela.
+
+    NAO E UM ERRO A CORRIGIR, e por isso a mensagem nao pede conserto: o id esta
+    certo, o nome esta certo, e o que falta e a LIGACAO entre os dois estar
+    escrita onde alguem le. Acusar so quando o id ainda existe no painel - id
+    ausente e outra classe (modelo de fato revogado).
+    """
+    achados = []
+    for cid in sorted(citados):
+        nome = (do_painel or {}).get(cid)
+        if nome is None:
+            continue                      # nao existe: outra classe
+        if not nome:
+            continue
+        cauda = cid.split("---")[-1].replace("-", " ").strip().lower()
+        if cauda and cauda in _fold(nome).lower():
+            continue                      # o nome ainda contem o que o id promete
+        achados.append(_achado(
+            "modelo_renomeado",
+            "a doc cita o id %r, cujo nome de exibicao hoje e %r" % (cid, nome),
+            "doc x painel",
+            "o id fossiliza o nome ANTIGO, e quem le o id conclui que o modelo "
+            "foi revogado. Nao ha erro a corrigir - falta a ligacao escrita "
+            "entre o id e o nome atual (D39)"))
+    return achados
+
 def _seguro(fn, *a, **kw):
     """Executa a coleta e devolve None se ela quebrar, em vez de derrubar tudo.
 
@@ -464,6 +521,22 @@ def conferir(plataforma=None, esteira=None):
                 "classe nao conferida contada como 'nada encontrado' e a forma "
                 "mais silenciosa de um conferidor mentir"))
 
+    # H - id de modelo citado na doc x nome de exibicao atual no painel (D39).
+    citados = set()
+    for arq in _arquivos(os.path.join(plataforma, "_nidum_docs"), ".md"):
+        citados |= set(_RE_ID_MODELO.findall(_ler(arq)))
+    if citados:
+        modelos, motivo_m = _seguro(_modelos_do_painel) or (None, "erro na coleta")
+        if modelos is None:
+            achados.append(_achado(
+                "nao_conferido",
+                "modelo_renomeado NAO foi conferida: %s" % motivo_m,
+                "ambiente de execucao",
+                "classe nao conferida contada como 'nada encontrado' e a forma "
+                "mais silenciosa de um conferidor mentir"))
+        else:
+            achados.extend(conferir_modelos_renomeados(citados, modelos))
+
     # F - FRAC_CATASTROFE fora do valor de desenho (variavel de repo da esteira).
     # Le do ambiente: na Action vem de vars.FRAC_CATASTROFE; na mao, de quem exportar.
     # Ausente NAO acusa - sem variavel vale o padrao do workflow, que ja e 0,25.
@@ -537,6 +610,8 @@ _TITULOS = {
     "id_fantasma": "Ids de colecao citados na doc e ausentes do config",
     "nao_conferido": ("CLASSES QUE NAO FORAM CONFERIDAS - leia antes de concluir "
                        "que esta tudo bem"),
+    "modelo_renomeado": ("Ids de modelo cujo NOME DE EXIBICAO mudou "
+                         "(nao e erro: falta a ligacao escrita)"),
     "fixture_vencida": ("Fixtures apontando para pasta que nao existe "
                         "(LISTA PARA REVISAO: parte pode ser sintetica)"),
 }
