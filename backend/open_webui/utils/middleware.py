@@ -2492,6 +2492,46 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                         *form_data.get('files', []),
                     ]
 
+    # SELECAO POR "#" NA MENSAGEM (NIDUM, 05/09/2026): o mesmo tratamento da pasta.
+    #
+    # O DEFEITO, medido em producao: selecionar a base "Reunioes" pelo # mostrava o
+    # chip na mensagem, injetava o contexto certo... e o agente chamava
+    # query_knowledge_files SEM knowledge_ids, trazendo fontes de Gestao de Projetos
+    # e ACA - bases que o usuario nao selecionou.
+    #
+    # A CAUSA: get_builtin_tools le EXATAMENTE DUAS fontes de escopo -
+    # model.info.meta.knowledge e metadata['folder_knowledge']. O "#" nao entra em
+    # nenhuma das duas: ele poe o item em form_data['files'], que alimenta o
+    # retrieval pre-pipe (get_sources_from_items) e para por ai. Contexto injetado,
+    # ferramenta desescopada - e o modelo decide pela ferramenta.
+    #
+    # E O MESMO PROBLEMA QUE A PASTA JA TEVE, e o conserto e o mesmo bloco acima:
+    # entregar a selecao em metadata['folder_knowledge'], que get_builtin_tools ja
+    # sabe mesclar. Nao e mecanismo novo; e o "#" alcancando o que a pasta alcanca.
+    #
+    # SO EM NATIVE, e so para colecao/arquivo/nota. Fora do Native o caminho antigo
+    # (contexto injetado) continua sendo o unico que existe, e mexer nele quebraria
+    # quem nao usa ferramenta.
+    if metadata.get('params', {}).get('function_calling') == 'native':
+        _sel = [
+            f for f in (form_data.get('files') or [])
+            if isinstance(f, dict) and f.get('type') in ('collection', 'file', 'note')
+            and f.get('id')
+        ]
+        if _sel:
+            metadata['folder_knowledge'] = [
+                *(metadata.get('folder_knowledge') or []),
+                *_sel,
+            ]
+            # SAI de form_data['files'] de proposito. Deixar nos dois lugares faria o
+            # retrieval pre-pipe rodar E a ferramenta buscar - o mesmo documento
+            # entrando duas vezes, e o orcamento pago em dobro. A selecao passa a
+            # ser UMA coisa: escopo de ferramenta.
+            _ids = {id(f) for f in _sel}
+            form_data['files'] = [
+                f for f in (form_data.get('files') or []) if id(f) not in _ids
+            ]
+
     # Model "Knowledge" handling
     user_message = get_last_user_message(form_data['messages'])
     model_knowledge = model.get('info', {}).get('meta', {}).get('knowledge', False)
