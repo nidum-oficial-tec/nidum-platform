@@ -13,6 +13,95 @@
 
 ---
 
+## 2026-09-05 - O EIXO DAS COLECOES MUDA: base = pasta-mae
+
+> Entrada escrita na `main`. A entrada do fechamento da Fase A (03/09) esta no PR
+> #41 e ainda nao foi mergeada - quando for, ela entra ABAIXO desta.
+
+**Decisao do Davi, revertendo um desenho da Fase 1.** As sete colecoes por tipo de
+documento dao lugar a **dez bases, uma por pasta-mae do SharePoint**. O registro
+completo - proposta, contra-argumento na integra, decisao e o que a invalidaria -
+esta na pagina de decisao; aqui fica o estado.
+
+### A premissa que decide
+
+> Quem seleciona uma base recebe **so o que esta nela**. Se a resposta esta em outra,
+> o usuario seleciona a base certa - ou nenhuma, e o acervo inteiro fica disponivel.
+> O Modo 2 e para quem quer **menos**, nao para quem quer tudo por outro caminho.
+
+### O teste do `#`, e o custo da regra num exemplo
+
+Mesma pergunta, duas respostas:
+
+| | resposta |
+|---|---|
+| **com `#` em Reunioes** | "11%, Etapa 1 em curso" |
+| **sem `#`** (acervo inteiro) | "78%, Etapa 1 concluida" |
+
+**As duas estao certas.** A primeira le so as atas; a segunda le tambem os
+cronogramas, que estao em Gestao de Projetos. E a regra do produto funcionando - e
+e o custo dela, ilustrado: **recorte estreito da resposta desatualizada, nao
+resposta errada**, e quem escolheu o recorte assumiu isso. Sem mitigacao prevista,
+por desenho.
+
+### As dez bases - linha de base de 05/09/2026
+
+| base | arquivos | % |
+|---|---:|---:|
+| Produtos | 140 | 26,7 |
+| Tecnologia | 100 | 19,1 |
+| 1 - Fonte | 83 | 15,8 |
+| Operacoes | 81 | 15,5 |
+| 3 - Reunioes | 75 | 14,3 |
+| Gestao de Projetos | 18 | 3,4 |
+| Marketing | 14 | 2,7 |
+| Academia | 10 | 1,9 |
+| Sustentabilidade | 2 | 0,4 |
+| Juridico | 1 | 0,2 |
+
+`Suprimentos e Fornecedores` virou subpasta de `Operacoes` (por isso 81, e nao 79).
+Quatro pastas-mae ficam **declaradas como excluidas**: `0 - Comece por aqui`,
+`4 - Pastas de Trabalho`, `Plataformas Regionais` e `Financas`.
+
+**A concentracao melhora:** a `nd-normas` detinha **55%** do acervo; a maior base do
+eixo novo fica em **26,7%**. E a expectativa estava invertida - o grosso vai para
+**Produtos**, nao para Operacoes.
+
+### Onde a migracao parou
+
+| passo | estado |
+|---|---|
+| 1 - relatorio de orfaos | **zero**, 524 arquivos, sete colecoes |
+| 2 - carga do SharePoint | **`resync` em andamento** ao fim do dia |
+| 3 - codigo do roteamento | PR aberto, com simulacao |
+| 4 a 9 | **nao iniciados** - dependem de merge e de decisao |
+
+**Bloqueio conhecido:** a rodada A nao pode comecar sem o `sync_config.json` novo na
+`main`, e isso e um merge. Com a regra de "nada mergeado" durante a ausencia, a
+migracao esta parada no passo 3 **por construcao, e nao por falha**.
+
+### O que a preparacao do dia produziu
+
+- **Roteamento pelo carimbo, nao pelo caminho do repo.** A pasta `PROD/` guarda 11
+  arquivos cuja origem e `3 - Reunioes/Atas`. Uma tabela sigla -> pasta os mandaria
+  para Produtos, com aparencia de acerto.
+- **Nao existe `padrao`.** Arquivo sem base para a rodada, com o nome do arquivo, o
+  da pasta e as duas saidas na tela.
+- **`ecossistema` no carimbo** (a pasta-mae), ja na `main`.
+- **Freio medido:** a rodada B remove 34 de 109 em `3 - Reunioes` - 31,2%, acima do
+  limiar de catastrofe, que bloqueia **mesmo confirmado**. Exige
+  `FRAC_CATASTROFE=0.35` naquela rodada, e restaurar depois.
+- **As cinco colecoes antigas nao sao esvaziadas** - congelam como ponto de reversao.
+  Esvaziar dispara `BLOQUEIA_ESVAZIAR`, que nao tem excecao.
+
+### Registrado no mesmo dia
+
+D32 (o caso "NAO CIRCULAM" era falso positivo), D33 (numero sem metodo), D34 (o
+incidente de governanca que **nao** existia), D35 (as bases ficam sem descricao).
+
+---
+
+
 ## 2026-08-18 (modo autônomo) — Fase 1 (2→7 coleções): T1–T3 em branches, sem publish
 
 **Sessão autônoma (~1h30). Nada em produção, nada em `main`, tudo em `feat/*` para aceite.**
