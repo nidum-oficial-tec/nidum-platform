@@ -11,7 +11,7 @@
 |---|---|---|
 | D1 | **Estender o fork do Open WebUI** (não criar do zero) | Reaproveita login, usuários, Storage, RAG, UI. Custo aceito: fork mais pesado de manter. |
 | D2 | **Roteamento por um "motor invisível" (ChatND)** em vez de o usuário escolher o modelo | Simplicidade para o usuário; ele só vê uma IA, a da Nidum. |
-| D3 | **RAG modo documento-inteiro** (não só trechos) | Trechos davam respostas fragmentadas/incompletas. Doc inteiro garante completude. Custo (~US$0,12/pergunta) aceito. |
+| D3 | ~~**RAG modo documento-inteiro** (não só trechos)~~ — **SUPERADA em 16/07/2026** | *Registro original:* trechos davam respostas fragmentadas/incompletas; doc inteiro garante completude; custo (~US$0,12/pergunta) aceito. **O que mudou:** o documento inteiro **competia com a busca afinada e estourava o orçamento** — medido, **159.849 de 200.000** caracteres consumidos por três documentos inteiros, sobrando quase nada para os trechos. `MAX_DOCS_INTEIROS` passou a `0` no `chatnd 1.23.0` (commit `e7232ec2`, 16/07/2026) e a máquina segue no código, desligada. Descrição corrente em `03_Arquitetura_e_Motor.md`. **Em aberto, e não decidido aqui:** se a completude que o D3 buscava deve voltar por outro mecanismo — a Fase D (enumeração) ataca o mesmo problema por um caminho diferente. |
 | D4 | **Layout dos arquivos no código da ferramenta**, não em prompt | Garante identidade da marca consistente; prompt/RAG não estilizam arquivo. |
 | D5 | **Wrappers privados + só a ChatND pública** | Usuário comum vê só a ChatND; motores ficam ocultos. |
 | D6 | **Controle de acesso por aprovação manual** (não OAuth) | `nidumbrasil.com.br` não é Google Workspace; e-mails não são contas Google. Admin aprova só `@nidumbrasil.com.br`. |
@@ -103,6 +103,34 @@
 - **Natureza:** funcionalidade nova de backend (Open WebUI não tem nativo) — job agendado sobre a tabela `chat` do Postgres, com **dry-run** antes de qualquer exclusão. A parte dos 90 dias é destrutiva → backup/confirmação.
 - **Decisão em aberto:** "comprimir" = compressão real do conteúdo (exige o app descomprimir na leitura, mexe no fork) **ou** arquivar (nativo, mais simples). A decidir antes de implementar.
 
+### `MODELO_GERAL` aponta para `nidum-10---dia-a-dia` — decisão pendente (05/09/2026)
+
+> **Não mexi no código, de propósito.** O default não é verificável offline, e
+> trocar um default que eu não consigo conferir seria repetir exatamente o D24.
+
+O que o código diz (`chatnd.py:4179-4182`), e o comentário é explícito: o apontamento
+**é deliberado** — `MODELO_GERAL` usa o mesmo wrapper que era o “Dia A Dia” porque
+**o Gerador de Arquivos já está anexado a ele**, e criar wrapper novo exigiria lembrar
+de reanexar a tool: *“é o clique que ninguém lembra”*.
+
+O que não sei: **se esse wrapper ainda existe no painel.** Na sessão A.2 apareceram
+modelos revogados e renomeados, e este é alcançado por `bypass_filter=True`, sem passar
+por `process_chat_payload` — ou seja, um wrapper revogado não produziria erro visível na
+rota, só comportamento diferente.
+
+**As três saídas, e o que cada uma custa:**
+
+1. **Confirmar no painel que o wrapper existe** e deixar como está. Custo: um olhar.
+   É a opção certa se ele existe — o motivo original continua válido.
+2. **Criar wrapper próprio para `geral`** e reanexar o Gerador. Custo: o clique que o
+   comentário diz que ninguém lembra — e, se esquecido, o `geral` perde a geração de
+   arquivos **em silêncio**. Só vale se houver razão para os dois divergirem.
+3. **Esvaziar o default** (como se fez com `BASE_CONHECIMENTO_ID`) e obrigar o painel a
+   decidir. Custo: instalação nova quebra até alguém preencher — que é a intenção:
+   falhar alto em vez de apontar para lugar errado.
+
+Minha leitura, sem decidir: **(1) se o wrapper existe, (3) se não existe.** A (2) só se
+houver produto por trás, e não para arrumar nome.
 ### Outras pendências em aberto
 | Pendência | Natureza | Observação |
 |---|---|---|
