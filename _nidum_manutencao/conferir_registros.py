@@ -270,15 +270,21 @@ def _contagens_do_painel(esteira):
     base = os.environ.get("OPENWEBUI_BASE_URL")
     chave = os.environ.get("OPENWEBUI_API_KEY")
     if not base or not chave:
-        return None
+        return None, "faltam OPENWEBUI_BASE_URL/OPENWEBUI_API_KEY neste ambiente"
+    # O MOTIVO VERDADEIRO, e nao o primeiro plausivel. A versao anterior dizia
+    # "faltam as credenciais" em QUALQUER falha - inclusive quando elas estavam
+    # presentes e o que faltava era o sync_config da esteira. Mandar quem le
+    # conferir a credencial certa por um motivo errado custa a mesma hora que
+    # custaria nao ter mensagem nenhuma, e ainda gasta a confianca na proxima.
     try:
         cfg = json.loads(_ler(os.path.join(esteira or "", "_scripts",
                                            "sync_config.json")))
         colecoes = cfg.get("colecoes") or {}
     except Exception:
-        return None
+        return None, ("credenciais presentes, mas falta o sync_config da esteira "
+                      "(os ids das bases moram la)")
     if not colecoes:
-        return None
+        return None, "o sync_config da esteira nao declara nenhuma colecao"
 
     import urllib.request
     base = base.rstrip("/")
@@ -308,9 +314,10 @@ def _contagens_do_painel(esteira):
                     break
                 pagina += 1
         except Exception:
-            return None
+            return None, ("a base nao respondeu para a colecao %r - credencial "
+                          "sem leitura nela, ou a colecao nao existe mais" % nome)
         out[nome] = total
-    return out
+    return out, None
 
 
 def _seguro(fn, *a, **kw):
@@ -439,12 +446,11 @@ def conferir(plataforma=None, esteira=None):
     # G - base que deveria estar vazia e nao esta. Precisa das contagens do painel,
     # que so existem com credencial; sem ela, a classe fica de fora E ISSO E DITO no
     # relatorio, em vez de passar por "nada encontrado".
-    contagens = _seguro(_contagens_do_painel, esteira)
+    contagens, motivo = _seguro(_contagens_do_painel, esteira) or (None, "erro inesperado na coleta")
     if contagens is None:
         achados.append(_achado(
             "nao_conferido",
-            "base_indevida NAO foi conferida: faltam OPENWEBUI_BASE_URL/"
-            "OPENWEBUI_API_KEY neste ambiente",
+            "base_indevida NAO foi conferida: %s" % motivo,
             "ambiente de execucao",
             "classe nao conferida contada como 'nada encontrado' e a forma mais "
             "silenciosa de um conferidor mentir"))
