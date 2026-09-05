@@ -1,10 +1,101 @@
 """
 title: Gerador de Arquivos Nidum
 author: Nidum
-version: 2.6.0
+version: 2.8.2
 description: Gera PPTX, XLSX, DOCX, PDF, HTML e APRESENTACAO HTML navegavel no servidor com alto padrao de acabamento (UX/UI) e a identidade do brandbook Nidum: paleta, fonte Maxima Nouva embutida, logos, contraste correto, layouts variados, tabelas refinadas, rodapes e numeracao. Insere imagens anexadas pelo usuario. Devolve link de download nativo.
 requirements: python-pptx, openpyxl, python-docx, reportlab
 changelog:
+  2.8.2:
+    - A DOCSTRING ERA A CAUSA, O ALIAS E O SINTOMA. Telemetria de producao (4
+      recusas identicas): o modelo mandou "corpo" e acertou TODO o resto que a
+      docstring nomeia. A docstring dizia "corpo" 5x como nome do CONCEITO e
+      "texto" 3x como nome do CAMPO - ele seguiu a palavra repetida. Reescrita
+      para nomear o campo ("O corpo do slide se chama texto. Nao existe campo
+      corpo") em vez de descrever o conceito. Mesma licao do chatnd.py:1420.
+    - "corpo" acrescentado aos aliases de texto - o erro mais previsivel, e ficou
+      de fora da primeira lista. Segue com telemetria e prazo.
+    - Registrada como PROPRIEDADE DESEJADA (nao acidente) o fato de a mensagem de
+      recusa ENSINAR: a recusa cai sempre no slide 3 e o modelo acerta do 4o em
+      diante - uma recusa por geracao, nao uma por slide.
+  2.8.1:
+    - DEDUPE POR NOME no anexo nativo (medido em producao, 03/09/2026): o modelo
+      chamou gerar_html duas vezes na mesma resposta - dois uuid, um nome so - e o
+      dedupe por id nao pegava; o usuario via TRES cards (HTML, PPTX, HTML).
+      Regerar o mesmo nome agora SUBSTITUI, mantendo a posicao original do card e
+      usando a versao nova. Caso travado no teste_anexo_nativo.py.
+  2.8.0:
+    - ANEXO NATIVO: o arquivo deixa de passar pelo modelo. A tool emite
+      {'type':'files'} pelo __event_emitter__ e o frontend faz message.files =
+      data.files (Chat.svelte:523), renderizando o card de download. O retorno ao
+      modelo vira uma frase SEM URL - nao ha o que corromper.
+      POR QUE: duas correcoes de link fecharam duas portas e abriram outras (sumiu a
+      barra inicial; depois o parentese do markdown vazou para dentro da URL). O
+      problema nunca foi sintaxe, era a TRANSCRICAO. D22: o que precisa ser exato e
+      imposto pelo codigo, nao pedido no texto.
+    - ACUMULACAO POR MENSAGEM (requisito, nao borda). O frontend SUBSTITUI a lista a
+      cada evento; "entregue em HTML e tambem em PPTX" - caso central da Fase D -
+      faria o 2o arquivo apagar o 1o. Guarda por message_id e reemite a lista
+      inteira. Teto de 64 mensagens em cache. Suite nova: teste_anexo_nativo.py.
+    - _registrar_arquivo devolve COPIA da lista. Devolver a referencia viva fazia o
+      payload do 1o evento ganhar o arquivo do 2o - invisivel hoje (o emitter
+      serializa na hora), bomba-relogio se um dia nao serializar. Achado pelo teste.
+    - CONTEXTVAR em vez de atributo de instancia: a Tools e reusada entre
+      requisicoes, e guardar o emitter em self faria uma resposta emitir na mensagem
+      de outra sob concorrencia.
+    - FALLBACK DECLARADO: sem emitter (o pipe nunca passa um), volta o link - e o
+      texto DIZ que e fallback, para aparecer na tela em vez de virar 404 mudo.
+      A frase "Link para download:" e CONTRATO com o pipe (chatnd.py:5773 decide a
+      oferta de outros formatos por ela) e ficou byte a byte igual.
+    - WEBUI_URL vazia agora e REGISTRADA em log com a consequencia (link relativo),
+      em vez de degradar calada. Configuracao vazia sem registro e como valve
+      apontando para colecao apagada.
+    - ACENTO EM ENUM DO MODELO. A validacao comparava tipo == "divisao" e o modelo
+      mandou "divisao" COM ACENTO: nao casou, e o slide escapou da validacao que
+      existia para pega-lo - o erro estava uma camada acima do que ele impedia.
+      _fold (mesmo criterio do _f3_fold do pipe) normaliza 'tipo' e 'cor' UMA vez,
+      em _normalizar_corpo_slides; os dois renderizadores passam a ver so a forma
+      canonica. Varredura da classe inteira feita: sao estes dois campos, nao ha
+      outros comparados por igualdade literal.
+    - Os dois parametros novos entram no FIM da assinatura. Poe-los no meio quebrou
+      quem chama por posicao (as suites de imagem passam 'imagens' assim) - pego
+      pela suite antes de publicar.
+  2.7.0:
+    - CONSUMIDOR GENERATIVO NAS DUAS PONTAS. Os tres defeitos medidos no A.5 (03/09/2026)
+      sao o MESMO deslocamento: a tool foi desenhada para o pipe, que montava a entrada
+      por schema e repassava a saida verbatim. No laco agentico o MODELO escreve a
+      entrada e transcreve a saida. O que precisa ser exato passa a ser imposto pelo
+      codigo, nao pedido no texto.
+    - LINK ABSOLUTO (defeito 1). _gravar resolve WEBUI_URL e devolve URL completa; o
+      modelo reescrevia o caminho relativo sem a barra inicial e o navegador resolvia
+      para /c/<chat_id>/api/... -> 404. Config vazia mantem o relativo (comportamento
+      antigo). As 7 docstrings mandam copiar o link verbatim e dizem o que quebra.
+      MEDIDO: pptx funcionou e html nao, na MESMA chamada - transcricao, nao codigo.
+    - DOCSTRING DE gerar_pptx COM O SCHEMA QUE FUNCIONA (defeito 2, item principal).
+      Portado do prompt do pipe (chatnd.py:1420), que e a versao provada: os 8 tipos
+      de slide (eram 4), os campos de cada um, 'itens' e 'cor' (nao existiam), e a
+      regra "o campo de corpo NUNCA pode vir vazio". EVIDENCIA: mesmo pedido, mesmo
+      modelo, mesma base - o pipe fez 18 slides com corpo, o agente fez 10 mudos. A
+      unica diferenca era a interface descrita.
+    - ALIASES DE CORPO COM TELEMETRIA (defeito 2, rede). texto/bullets/itens aceitam
+      nomes alternativos, e cada alias aceito e LOGADO com o nome que chegou. Tem
+      PRAZO: uso zero por duas semanas -> saem. Alias sem telemetria vira esteira
+      rolante. A tolerancia de FORMATO (string JSON) ja existia em _coerce/_lista.
+    - VALIDACAO QUE GRITA (defeito 2). Slide de tipo que exige corpo (conteudo,
+      destaque, divisao, numerada, cartoes) chegando vazio agora RECUSA com
+      diagnostico e lista as chaves recebidas, em vez de gerar caixa muda em
+      silencio. capa/secao/encerramento seguem validos sem corpo.
+    - BLOCO-GUARDA DO CHROME (defeito 3). O CSS da marca entra antes de </head>, logo
+      o CSS do modelo vinha depois e vencia por cascata (medido: "* {margin:0}"
+      anulava o cabecalho, "img{width:100%}" esticava a logo). Um bloco com !important
+      nas propriedades ESTRUTURAIS do chrome entra por ULTIMO, antes de </body>.
+      ESCOPO DELIBERADO: conserta o CHROME, nao o CORPO - tema e cores do corpo sao
+      escritos pelo modelo, e quem resolve isso e a skill de HTML.
+    - @IMPORT EXTERNO REMOVIDO (defeito 3). Referencia remota de estilo escrita pelo
+      modelo quebrava o offline que o base64 das fontes garante. Removida com log.
+      NAO ha rejeicao de hex fora da paleta: exigiria parsear CSS e daria falso
+      positivo em uso legitimo (branco de texto, cor de serie em grafico).
+    - MaximaNouva-ExtraBold registrada. O arquivo esta no build desde 13/07/2026 e
+      nunca era usada: faltava no @font-face do HTML, no do deck e no reportlab.
   2.6.0:
     - gerar_codigo (MODO PRESERVACAO; par do pipe chatnd 1.51.0). Grava codigo-fonte
       VERBATIM, sem injetar marca nem editor - para EDITAR o app do usuario (HTML com
@@ -127,6 +218,7 @@ changelog:
 # Os textos com acento vem do usuario em tempo de execucao, o que nao e problema.
 
 import asyncio
+import contextvars
 import io
 import os
 import json
@@ -445,13 +537,24 @@ def _brand_css():
             _font_face("MaximaNouva-Regular.ttf", 400),
             _font_face("MaximaNouva-SemiBold.ttf", 600),
             _font_face("MaximaNouva-Bold.ttf", 700),
+            _font_face("MaximaNouva-ExtraBold.ttf", 800),
             _font_face("MaximaNouva-Italic.ttf", 400, "italic"),
             _font_face("Ibrand.ttf", "100 900", "normal", "Ibrand"),
         ]
     )
     rules = (
-        ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;"
-        "--cinza:#9D9890;--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;}"
+    # PALETA: os SEIS nomes oficiais do brandbook sao os canonicos; os antigos
+    # viram ALIAS apontando para eles (--creme -> var(--areia) e assim por diante).
+    # Alias, e nao troca seca, porque estes CSS ja sairam em arquivos que estao no
+    # SharePoint e em caixas de e-mail: um .html gerado em agosto continua abrindo
+    # com --creme, e quebrar isso seria estragar entrega passada para arrumar nome.
+    # PRAZO: revisar em 2026-12 - se nenhuma regra nova usar os antigos ate la, os
+    # aliases saem e ficam so os seis. Quem revisar: procure "--creme" e "--azul"
+    # no repo; zero ocorrencias fora deste bloco = pode remover.
+        ":root{--areia:#E5E0D5;--pedra:#9D9890;--terracota:#9A4A2E;"
+        "--ceu:#4F7187;--musgo:#515E52;--escuro:#1F1E1B;"
+        "--creme:var(--areia);--cinza:var(--pedra);--azul:var(--ceu);"
+        "--verde:var(--musgo);--preto:var(--escuro);--cremealt:var(--areia);}"
         "*{box-sizing:border-box}"
         "html{background:#E5E0D5}"
         "body{background:#E5E0D5;color:#1F1E1B;"
@@ -501,10 +604,58 @@ def _brand_css():
     return "<style>/*NIDUM_BRAND*/\n" + faces + rules + "</style>"
 
 
+_RE_IMPORT_EXTERNO = re.compile(
+    r"@import\s+url\(\s*['\"]?https?://[^)]*\)\s*;?", re.IGNORECASE
+)
+_RE_LINK_EXTERNO = re.compile(
+    r"<link\b[^>]*rel\s*=\s*['\"]?stylesheet['\"]?[^>]*https?://[^>]*>", re.IGNORECASE
+)
+
+
+def _guarda_chrome_css():
+    # BLOCO-GUARDA (03/09/2026). O CSS da marca e inserido ANTES de </head>, entao o
+    # CSS do modelo vem DEPOIS e vence por ordem de cascata - medido: um "* {margin:0}"
+    # do modelo anulava o espacamento do cabecalho e um "img{width:100%}" esticava a
+    # logo. Este bloco entra por ULTIMO (antes de </body>) e usa !important nas poucas
+    # propriedades ESTRUTURAIS do chrome.
+    #
+    # ESCOPO, e ele e deliberado: isto conserta o CHROME (cabecalho, rodape, logo).
+    # NAO conserta o CORPO. Se o modelo escrever o corpo em tema escuro com acento
+    # fora da paleta, ele continua assim - quem escreve o corpo e o modelo, e quem
+    # resolve isso e a skill de HTML, nao a ferramenta.
+    return (
+        "<style>/*NIDUM_GUARDA*/\n"
+        "header.nidum-header,footer.nidum-footer{"
+        "background:transparent!important;padding:24px 0!important;"
+        "margin:0!important;border:0!important;display:block!important;"
+        "text-align:center!important;}"
+        "header.nidum-header img,footer.nidum-footer img{"
+        "height:40px!important;width:auto!important;max-width:none!important;"
+        "display:inline-block!important;object-fit:contain!important;"
+        "filter:none!important;opacity:1!important;}"
+        "footer.nidum-footer span{color:#9D9890!important;font-size:13px!important;"
+        "display:block!important;margin-top:8px!important;}"
+        "</style>"
+    )
+
+
 def _injetar_marca_html(conteudo):
     # Insere a folha de marca no <head> e um rodape sobrio antes de </body>.
     if "NIDUM_BRAND" in conteudo:
         return conteudo
+    # OFFLINE: o base64 das fontes garante que o HTML funcione sem rede. Um @import
+    # ou <link> remoto escrito pelo modelo quebra essa garantia (medido: o modelo
+    # importou Inter do Google Fonts). Remove e segue - a substituta local assume.
+    n_ext = len(_RE_IMPORT_EXTERNO.findall(conteudo)) + len(
+        _RE_LINK_EXTERNO.findall(conteudo)
+    )
+    if n_ext:
+        conteudo = _RE_IMPORT_EXTERNO.sub("", conteudo)
+        conteudo = _RE_LINK_EXTERNO.sub("", conteudo)
+        log.info(
+            "gerador_nidum: %d referencia(s) externa(s) de estilo removida(s) "
+            "(o HTML precisa abrir offline)", n_ext,
+        )
     css = _brand_css()
     low = conteudo.lower()
     idx = low.find("</head>")
@@ -537,11 +688,15 @@ def _injetar_marca_html(conteudo):
         + (("<img src='" + logo + "'>") if logo else "")
         + "<span>nidum. fazer da casa um ninho.</span></footer>"
     )
+    # O bloco-guarda vai DEPOIS do rodape e ANTES de </body>: por ordem de cascata
+    # ele e a ultima palavra sobre o chrome, mesmo que o modelo tenha escrito o
+    # proprio CSS depois do <head>.
+    fecho = footer + _guarda_chrome_css()
     bidx = conteudo.lower().rfind("</body>")
     if bidx != -1:
-        conteudo = conteudo[:bidx] + footer + conteudo[bidx:]
+        conteudo = conteudo[:bidx] + fecho + conteudo[bidx:]
     else:
-        conteudo = conteudo + footer
+        conteudo = conteudo + fecho
     return conteudo
 
 
@@ -653,8 +808,14 @@ def _logo_b64(cor):
 
 DECK_CSS = (
     "*{box-sizing:border-box;margin:0;padding:0}"
-    ":root{--terracota:#9A4A2E;--verde:#515E52;--azul:#4F7187;--cinza:#9D9890;"
-    "--preto:#1F1E1B;--creme:#E5E0D5;--cremealt:#E5E0D5;--rn:26px;"
+    # Mesma paleta do bloco acima (nomes oficiais + alias). Os dois blocos sao
+    # copias por desenho - CSS embutido em arquivo entregue nao pode depender de
+    # import; se um mudar, o outro muda junto. O teste afirma que sao iguais.
+    ":root{--areia:#E5E0D5;--pedra:#9D9890;--terracota:#9A4A2E;"
+    "--ceu:#4F7187;--musgo:#515E52;--escuro:#1F1E1B;"
+    "--creme:var(--areia);--cinza:var(--pedra);--azul:var(--ceu);"
+    "--verde:var(--musgo);--preto:var(--escuro);--cremealt:var(--areia);"
+    "--rn:26px;"
     "--sc:0 26px 70px rgba(31,30,27,.34)}"
     "html,body{height:100%;background:#1F1E1B;"
     "font-family:'Maxima Nouva',-apple-system,Segoe UI,Roboto,Arial,sans-serif}"
@@ -847,9 +1008,30 @@ def _lista(value):
     return [value]
 
 
+def _quebras(txt):
+    # SEPARADOR DE PARAGRAFO -> QUEBRA NORMAL.
+    #
+    # Texto vindo de documento (Word, PowerPoint, PDF convertido) usa VT (\x0b)
+    # onde o autor apertou Shift+Enter, e FF (\x0c) na quebra de pagina. O Word
+    # chama os dois de "quebra"; o Python nao - str.split("\n") ignora ambos.
+    #
+    # O efeito era MUDO, que e o pior tipo: o bloco virava UMA linha so, o separador
+    # sobrava dentro do texto como caractere de controle, e o PowerPoint desenhava um
+    # retangulo vazio no meio da frase. Sem erro, sem log - um slide feio que ninguem
+    # liga ao caractere que o causou.
+    #
+    # Normaliza UMA vez, na fronteira: daqui para dentro so existe "\n".
+    # \r\n e \r entram junto por terem a mesma origem (arquivo que passou por
+    # Windows ou por Mac antigo); LS/PS (\u2028/\u2029) pela mesma razao, vindos de
+    # copiar-colar de PDF.
+    t = str(txt or "")
+    for bruto in ("\r\n", "\r", "\x0b", "\x0c", "\u2028", "\u2029"):
+        t = t.replace(bruto, "\n")
+    return t
+
 def _texto_para_slide(txt):
     # Converte uma string "Titulo\n- bullet\n- bullet\ntexto" em slide dict.
-    linhas = [l.strip() for l in str(txt).split("\n") if l.strip()]
+    linhas = [l.strip() for l in _quebras(txt).split("\n") if l.strip()]
     titulo = ""
     bullets = []
     textos = []
@@ -870,7 +1052,7 @@ def _texto_para_slide(txt):
 
 def _texto_para_secao(txt):
     # Converte uma string "Heading\n- bullet\nparagrafo" em secao dict.
-    linhas = [l.strip() for l in str(txt).split("\n") if l.strip()]
+    linhas = [l.strip() for l in _quebras(txt).split("\n") if l.strip()]
     heading = ""
     paragrafos = []
     bullets = []
@@ -904,6 +1086,232 @@ def _itens_loose(value, conversor_string):
         elif isinstance(item, str) and item.strip():
             out.append(conversor_string(item))
     return out
+
+
+# ---- CORPO DO SLIDE: aliases com telemetria + validacao alta (03/09/2026) ----
+# POR QUE EXISTE: no laco agentico o MODELO escreve a entrada da ferramenta, e a
+# docstring e a unica interface que ele le. Medido em 03/09: o pipe (schema por
+# extenso no prompt) gerou 18 slides com corpo cheio; o agente, mesmo pedido e
+# mesmo modelo, 10 slides MUDOS. A docstring foi corrigida com o schema que
+# funciona; estes aliases sao REDE, nao conserto.
+#
+# PRAZO: cada alias aceito e logado com o nome que chegou. Se o log mostrar uso
+# ZERO por duas semanas, os aliases SAEM - alias sem telemetria vira esteira
+# rolante, e o que sustenta a remocao e o dado, nao a lembranca de alguem.
+#
+# O QUE A TELEMETRIA JA ENSINOU (medido em producao, 03/09/2026): quatro recusas,
+# todas com as mesmas chaves - 'corpo, destaque_rotulo, destaque_texto, rotulo,
+# tipo, titulo'. O modelo ACERTOU tudo que a docstring nomeia e errou so o corpo.
+# A causa nao era vocabulario dele: era a MINHA docstring, que dizia "corpo" cinco
+# vezes como o nome do conceito e "'texto'" tres como o nome do campo. Ele seguiu a
+# palavra repetida. A docstring foi corrigida para nomear o campo em vez de descrever
+# o conceito ("O corpo do slide se chama 'texto'. Nao existe campo 'corpo'").
+# 'corpo' entra como alias porque e o erro mais previsivel de todos - mas o conserto
+# de verdade foi o nome, nao o alias. Alias trata sintoma; nome claro trata a causa.
+_ALIAS_TEXTO = ("texto", "corpo", "conteudo", "body", "paragrafo", "paragrafos",
+                "descricao")
+_ALIAS_BULLETS = ("bullets", "pontos", "itens_texto", "topicos", "lista", "marcadores")
+_ALIAS_ITENS = ("itens", "items", "cartoes", "etapas")
+# Tipos que ficam MUDOS sem corpo. 'capa', 'secao' e 'encerramento' sao legitimos
+# sem corpo - nao entram aqui.
+_TIPOS_EXIGEM_CORPO = ("conteudo", "destaque", "divisao", "numerada", "cartoes")
+
+
+def _campo_alias(slide, aliases, metodo="gerar_pptx"):
+    # Devolve o valor do primeiro alias presente. Loga quando o nome usado NAO foi
+    # o canonico (o primeiro da tupla) - e essa linha que decide se os aliases ficam.
+    canonico = aliases[0]
+    for nome in aliases:
+        valor = slide.get(nome)
+        if valor:
+            if nome != canonico:
+                log.info(
+                    "gerador_nidum: %s ALIAS ACEITO '%s' -> '%s' (slide tipo=%s)",
+                    metodo, nome, canonico, slide.get("tipo") or "?",
+                )
+            return valor
+    return None
+
+
+def _diag_slide_mudo(metodo, idx, slide):
+    # Slide de tipo que EXIGE conteudo e chegou sem nenhum. Antes isto gerava uma
+    # caixa vazia no arquivo, em silencio - o defeito medido em 03/09. Agora grita, e
+    # diz QUAIS chaves chegaram: sem isso, o proximo diagnostico volta a ser
+    # adivinhacao.
+    #
+    # PROPRIEDADE DESEJADA, NAO ACIDENTE: a mensagem ENSINA. Medido em producao -
+    # a recusa acontece sempre no slide 3 (o primeiro de conteudo, depois de capa e
+    # sumario), o modelo le o erro, corrige, e acerta do quarto em diante. Uma
+    # recusa por geracao, nao uma por slide. Por isso a mensagem nomeia os campos
+    # certos E lista os que chegaram: recusar sem ensinar geraria o mesmo erro em
+    # laco ate estourar o teto de iteracoes. Toda validacao nova desta ferramenta
+    # deve manter isso - dizer o que falta E o que veio no lugar.
+    chaves = sorted([str(k) for k in (slide or {}).keys()])
+    log.warning(
+        "gerador_nidum: %s slide %d tipo=%s SEM CORPO. Chaves recebidas: %s",
+        metodo, idx, slide.get("tipo") or "?", ", ".join(chaves) or "(nenhuma)",
+    )
+    return (
+        "DIAGNOSTICO " + metodo + ": o slide " + str(idx) + " (tipo '"
+        + str(slide.get("tipo") or "?") + "') chegou sem nenhum campo de corpo, "
+        "e sairia mudo no arquivo. Esse tipo exige 'texto', 'bullets' ou 'itens'. "
+        "As chaves que chegaram foram: " + (", ".join(chaves) or "(nenhuma)") + ". "
+        "Reenvie o slide com o corpo preenchido."
+    )
+
+
+# ---- ANEXO NATIVO (03/09/2026): o arquivo aparece SEM passar pelo modelo ----
+# POR QUE: duas correcoes de link fecharam duas portas e abriram outras - primeiro a
+# barra inicial sumia (/c/api/...), depois o parentese do markdown vazava para dentro
+# da URL. O problema nunca foi sintaxe: e a TRANSCRICAO. Instrucao em docstring e
+# pedido; o D22 manda impor pelo codigo.
+#
+# COMO: o evento {'type':'files'} faz o frontend executar message.files = data.files
+# (Chat.svelte:523) e renderizar o card de download nativo. O modelo nao ve endereco
+# nenhum - recebe so uma frase de confirmacao.
+#
+# ACUMULACAO E REQUISITO, NAO DETALHE: o frontend SUBSTITUI a lista a cada evento.
+# Num pedido como "entregue em HTML e tambem em PPTX" - caso central da Fase D - o
+# segundo evento apagaria o primeiro da mensagem. Por isso guardamos por message_id e
+# reemitimos a lista INTEIRA a cada arquivo novo. Trocar um bug visivel (404) por um
+# invisivel (arquivo que some) seria pior que o estado atual.
+_ARQUIVOS_POR_MENSAGEM = {}
+_MAX_MENSAGENS_EM_CACHE = 64
+
+# CONTEXTVAR, e nao atributo de instancia: a Tools e reusada entre requisicoes, e
+# guardar o emitter em self faria uma resposta emitir na mensagem de outra sob
+# concorrencia. ContextVar e por tarefa asyncio - isolada por definicao. Evita
+# tambem passar dois parametros por 14 assinaturas internas.
+_CTX_EMITTER = contextvars.ContextVar("nidum_emitter", default=None)
+_CTX_MESSAGE_ID = contextvars.ContextVar("nidum_message_id", default=None)
+
+
+def _ctx_entrega(emitter, message_id):
+    # Chamado no inicio de cada metodo publico, com o que o Open WebUI injetou.
+    _CTX_EMITTER.set(emitter)
+    _CTX_MESSAGE_ID.set(message_id)
+
+
+def _registrar_arquivo(message_id, item):
+    # Acumula e devolve a lista completa da mensagem. Sem message_id (chamada fora de
+    # um chat) nao ha o que acumular: devolve so o item.
+    if not message_id:
+        return [item]
+    lista = _ARQUIVOS_POR_MENSAGEM.setdefault(message_id, [])
+    # DEDUPE POR NOME, nao por id (medido em producao 03/09/2026): quando o modelo
+    # chama gerar_html duas vezes na mesma resposta, saem DOIS arquivos com uuid
+    # diferente e o MESMO nome - dedupe por id nao pega, e o usuario ve tres cards
+    # (HTML, PPTX, HTML). Regenerar o mesmo nome e SUBSTITUIR, nao acrescentar.
+    # Mantem a POSICAO original: o card nao pula de lugar quando e regerado.
+    for idx, existente in enumerate(lista):
+        if existente.get("name") == item.get("name"):
+            if existente.get("id") != item.get("id"):
+                log.info(
+                    "gerador_nidum: %s regerado na mesma mensagem - card substituido "
+                    "(id %s -> %s)", item.get("name"), existente.get("id"),
+                    item.get("id"),
+                )
+            lista[idx] = item
+            break
+    else:
+        lista.append(item)
+    # Teto de memoria: o dict e de processo e viveria para sempre sem isto.
+    if len(_ARQUIVOS_POR_MENSAGEM) > _MAX_MENSAGENS_EM_CACHE:
+        for k in list(_ARQUIVOS_POR_MENSAGEM)[:-_MAX_MENSAGENS_EM_CACHE]:
+            _ARQUIVOS_POR_MENSAGEM.pop(k, None)
+    # COPIA, nao a lista viva: o evento ja emitido nao pode mudar depois. Devolver a
+    # referencia fazia o payload do 1o evento ganhar o arquivo do 2o - invisivel em
+    # producao (o emitter serializa na hora) e uma bomba-relogio se um dia nao
+    # serializar. Achado pelo teste_anexo_nativo.
+    return list(lista)
+
+
+async def _emitir_arquivo(emitter, message_id, file_id, filename, content_type, url):
+    # Devolve True se o anexo nativo foi entregue. False -> o chamador avisa que
+    # esta caindo no fallback (nunca falhar em silencio: e o que produziu o 404).
+    if emitter is None:
+        return False
+    item = {
+        "type": "file",
+        "id": file_id,
+        "name": filename,
+        "url": url,
+        "content_type": content_type,
+    }
+    try:
+        resultado = emitter(
+            {"type": "files", "data": {"files": _registrar_arquivo(message_id, item)}}
+        )
+        if inspect.isawaitable(resultado):
+            await resultado
+        return True
+    except Exception:
+        log.exception("gerador_nidum: falha ao emitir o anexo nativo de %s", filename)
+        return False
+
+
+def _fold(s):
+    # Dobra acento e caixa. MESMO criterio do _f3_fold do pipe - reusado de proposito:
+    # os dois recebem texto escrito por modelo, e ter dois criterios de comparacao para
+    # o mesmo dado e como ter dois relogios.
+    s = unicodedata.normalize("NFD", str(s or "").strip())
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
+# Campos de ENUM que chegam do modelo e sao comparados por igualdade literal no
+# codigo. Todo campo aqui e dobrado UMA vez, em _normalizar_corpo_slides, e os
+# renderizadores passam a ver so a forma canonica.
+#
+# POR QUE ISTO EXISTE (03/09/2026): a validacao de slide mudo comparava
+# tipo == "divisao" e o modelo mandou "divisao" COM ACENTO - nao casou, e o slide
+# escapou da validacao que existia para pega-lo. O erro estava uma camada acima do
+# que ele deveria impedir: comparacao literal sobre texto de modelo. Varredura feita
+# na mesma sessao: 'tipo' e comparado em DOIS renderizadores (_slide_html e _pptx) e
+# 'cor' resolvia por .lower() sem dobrar acento. Sao estes dois - nao ha outros.
+_ENUMS_DO_MODELO = ("tipo", "cor")
+
+
+def _normalizar_corpo_slides(slides, metodo="gerar_pptx"):
+    # Resolve os aliases para os nomes canonicos e valida o corpo. Devolve
+    # (slides, erro): erro != None significa PARE e devolva o erro ao chamador -
+    # e melhor recusar com diagnostico do que entregar um arquivo mudo.
+    for idx, s in enumerate(slides or [], start=1):
+        if not isinstance(s, dict):
+            continue
+        # Enums dobrados ANTES de qualquer comparacao - os renderizadores comparam
+        # por igualdade literal e passam a ver so a forma canonica.
+        for campo in _ENUMS_DO_MODELO:
+            if s.get(campo):
+                bruto = str(s[campo])
+                s[campo] = _fold(bruto)
+                if s[campo] != bruto.strip().lower():
+                    log.info(
+                        "gerador_nidum: %s campo '%s' normalizado %r -> %r",
+                        metodo, campo, bruto, s[campo],
+                    )
+        for aliases in (_ALIAS_TEXTO, _ALIAS_BULLETS, _ALIAS_ITENS):
+            valor = _campo_alias(s, aliases, metodo)
+            if valor and not s.get(aliases[0]):
+                s[aliases[0]] = valor
+        # QUEBRAS na fronteira: o texto pode vir de documento (VT/FF do Word) tanto
+        # pela string solta quanto por este caminho, quando o modelo copia um trecho
+        # de fonte para dentro do campo. Normalizar so no _texto_para_slide deixaria
+        # metade do problema de pe - e a metade que aparece no slide.
+        for campo in (_ALIAS_TEXTO[0], "titulo", "subtitulo", "antetitulo"):
+            if isinstance(s.get(campo), str):
+                s[campo] = _quebras(s[campo])
+        for campo in (_ALIAS_BULLETS[0], _ALIAS_ITENS[0]):
+            if isinstance(s.get(campo), list):
+                s[campo] = [_quebras(x) if isinstance(x, str) else x
+                            for x in s[campo]]
+        tipo = _fold(s.get("tipo"))
+        if tipo in _TIPOS_EXIGEM_CORPO:
+            tem_corpo = bool(
+                s.get("texto") or _lista(s.get("bullets")) or _lista(s.get("itens"))
+            )
+            if not tem_corpo:
+                return slides, _diag_slide_mudo(metodo, idx, s)
+    return slides, None
 
 
 def _diag_entrada_vazia(metodo, nome_param, valor_raw):
@@ -1011,8 +1419,62 @@ async def _salvar_e_linkar(data_bytes, filename, content_type, user_id):
     if inserted is None:
         raise RuntimeError("Falha ao registrar o arquivo no banco (insert_new_file).")
 
+    # LINK ABSOLUTO QUANDO POSSIVEL (defeito medido no laco agentico, 03/09/2026).
+    # No pipe, esta string E a resposta: o caminho relativo chegava intacto ao usuario.
+    # No laco agentico ela e INSUMO - o modelo reescreve o link na resposta dele, e ao
+    # perder a barra inicial o navegador resolve relativo a /c/<chat_id>, gerando
+    # /c/api/v1/files/... -> 404. URL absoluta e imune a essa resolucao.
+    # WEBUI_URL vazia (default) -> mantem o caminho relativo, comportamento de sempre.
     download_path = "/api/v1/files/" + file_id + "/content"
-    return "[Clique aqui para baixar " + filename + "](" + download_path + ")"
+    absoluto = False
+    try:
+        from open_webui.config import WEBUI_URL
+
+        base = str(getattr(WEBUI_URL, "value", WEBUI_URL) or "").strip().rstrip("/")
+        if base.startswith("http"):
+            download_path = base + download_path
+            absoluto = True
+    except Exception:
+        log.exception("gerador_nidum: falha ao resolver WEBUI_URL; link segue relativo")
+    if not absoluto:
+        # REGISTRO VISIVEL (pedido do Davi, 03/09/2026): configuracao vazia sem
+        # registro e como a valve apontando para colecao apagada - ninguem descobre
+        # ate quebrar. Com o anexo nativo abaixo isto deixa de ter consequencia.
+        log.warning(
+            "gerador_nidum: WEBUI_URL vazia -> o link de %s sai RELATIVO. Se o anexo "
+            "nativo nao chegar, o modelo transcreve o caminho e pode gerar 404.",
+            filename,
+        )
+
+    # ANEXO NATIVO primeiro: se ele chega, o endereco nunca passa pelo modelo.
+    entregue = await _emitir_arquivo(
+        _CTX_EMITTER.get(), _CTX_MESSAGE_ID.get(), file_id, filename,
+        content_type, download_path,
+    )
+    if entregue:
+        # Sem URL no texto - nao ha o que o modelo corromper. O card de download ja
+        # esta na mensagem.
+        return (
+            "O arquivo " + filename + " foi anexado a esta resposta. O usuario ja tem "
+            "o botao de download na tela - NAO escreva link nenhum, apenas diga que o "
+            "arquivo esta pronto."
+        )
+    # FALLBACK DECLARADO: o evento nao chegou (sem emitter, ou falhou). O link volta,
+    # e o texto DIZ que e fallback - para aparecer na tela em vez de virar 404 mudo.
+    #
+    # A FRASE "Link para download:" E CONTRATO COM O PIPE, NAO ENFEITE: o chatnd faz
+    # `if "Link para download" in saida` (chatnd.py:5773) para decidir se oferece os
+    # outros formatos. Mudar este texto desliga aquela oferta EM SILENCIO. O pipe
+    # nunca passa __event_emitter__, entao ele cai sempre aqui e ve a string de
+    # sempre - byte a byte. (Contrato por prosa entre dois componentes e fragil;
+    # esta na fila para virar marcador explicito.)
+    log.warning("gerador_nidum: anexo nativo indisponivel para %s; usando link", filename)
+    return (
+        "Link para download: [Clique aqui para baixar " + filename + "]("
+        + download_path + ")"
+        + "\n\n(Anexo nativo indisponivel nesta resposta - entregue por link. "
+        "Reproduza o endereco acima EXATAMENTE como esta.)"
+    )
 
 
 class Tools:
@@ -1035,23 +1497,65 @@ class Tools:
     # ------------------------------------------------------------------
     async def gerar_pptx(
         self, titulo: str, slides: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1, imagens: list = None
+        ecossistema: str = "", versao: int = 1, imagens: list = None,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """Gera uma apresentacao PowerPoint (.pptx) e devolve um link de download.
 
         :param titulo: titulo geral da apresentacao.
-        :param slides: lista de slides. Cada slide e um dicionario com:
-            tipo ('capa'/'secao'/'conteudo'/'encerramento'), titulo,
-            subtitulo (opcional), bullets (opcional, lista), texto (opcional),
-            imagem (opcional, marcador tipo 'IMAGEM_1').
+        :param slides: lista de slides. Cada slide e um dicionario com 'tipo',
+            'titulo' e o conteudo do slide.
+
+            O CONTEUDO VAI SEMPRE EM UM DESTES TRES CAMPOS, com estes nomes exatos:
+              'texto'    - uma string. E o corpo do slide.
+              'bullets'  - uma lista de strings.
+              'itens'    - uma lista de {titulo, texto}, so em 'numerada' e 'cartoes'.
+            Nao existe campo 'corpo', 'conteudo' nem 'descricao'. O corpo do slide
+            se chama 'texto'.
+
+            Nenhum slide de conteudo pode vir sem um desses tres: slide vazio sai
+            mudo no arquivo e a ferramenta RECUSA a geracao com erro. A apresentacao
+            precisa de ao menos 3 slides preenchidos.
+
+            Os OITO tipos, e o que cada um espera:
+              capa          - abertura. subtitulo (opcional).
+              secao         - divisoria de tema, fundo colorido. 'cor' (opcional).
+              conteudo      - titulo + 'texto' e/ou 'bullets' em fundo creme.
+              destaque      - uma frase ou conceito forte em fundo colorido cheio.
+                              'texto' + 'cor'.
+              divisao       - titulo num bloco de cor a esquerda, 'texto'/'bullets'
+                              a direita. Defina 'cor'.
+              numerada      - etapas ou passos com numeros grandes. Preencha
+                              'itens' com uma lista de {titulo, texto}.
+              cartoes       - 2 a 4 cartoes coloridos lado a lado (valores,
+                              pilares). Preencha 'itens' com {titulo, texto}.
+              encerramento  - fecho.
+
+            Campos aceitos: tipo, titulo, subtitulo, texto (string), bullets
+            (lista de strings), itens (lista de {titulo, texto} - so em
+            'numerada' e 'cartoes'), cor ('verde'|'azul'|'terracota'|'preto'),
+            imagem (marcador tipo 'IMAGEM_1').
+
+            VARIE os layouts - nao use so 'conteudo', fica monotono. Numa
+            apresentacao tipica alterne os tipos (ex.: capa, conteudo, destaque,
+            cartoes, divisao, numerada, secao, encerramento) e varie a 'cor'
+            entre slides coloridos vizinhos. Para pilares, valores ou categorias
+            prefira 'cartoes'; para etapas ou passos, 'numerada'; para uma
+            afirmacao de impacto, 'destaque'. Prefira bullets curtos a
+            paragrafos longos.
         :param marca: aplica a identidade visual da Nidum (padrao True).
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
         :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
             ordem dos marcadores IMAGEM_1, IMAGEM_2... Vem do pipe por parametro,
             nunca de um modelo.
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             return await self._pptx(titulo, slides, marca, __user__, ecossistema,
                                     versao, imagens)
@@ -1060,7 +1564,8 @@ class Tools:
 
     async def gerar_xlsx(
         self, titulo: str, planilhas: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """Gera uma planilha Excel (.xlsx) e devolve um link de download.
 
@@ -1070,8 +1575,13 @@ class Tools:
         :param marca: aplica a identidade visual da Nidum (padrao True).
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             return await self._xlsx(titulo, planilhas, marca, __user__, ecossistema, versao)
         except Exception:
@@ -1079,7 +1589,8 @@ class Tools:
 
     async def gerar_docx(
         self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1, imagens: list = None
+        ecossistema: str = "", versao: int = 1, imagens: list = None,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """Gera um documento Word (.docx) e devolve um link de download.
 
@@ -1092,8 +1603,13 @@ class Tools:
         :param versao: numero de versao para o nome do arquivo (padrao 1).
         :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
             ordem dos marcadores IMAGEM_1, IMAGEM_2...
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             return await self._docx(titulo, secoes, marca, __user__, ecossistema,
                                     versao, imagens)
@@ -1102,7 +1618,8 @@ class Tools:
 
     async def gerar_pdf(
         self, titulo: str, secoes: list, marca: bool = True, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1, imagens: list = None
+        ecossistema: str = "", versao: int = 1, imagens: list = None,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """Gera um documento PDF e devolve um link de download.
 
@@ -1115,8 +1632,13 @@ class Tools:
         :param versao: numero de versao para o nome do arquivo (padrao 1).
         :param imagens: imagens ANEXADAS PELO USUARIO (data-URL base64 ou bytes), na
             ordem dos marcadores IMAGEM_1, IMAGEM_2...
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             return await self._pdf(titulo, secoes, marca, __user__, ecossistema,
                                    versao, imagens)
@@ -1134,7 +1656,8 @@ class Tools:
 
     async def gerar_codigo(
         self, titulo: str, conteudo: str, ext: str = "html", __user__: dict = None,
-        ecossistema: str = "", versao: int = 1
+        ecossistema: str = "", versao: int = 1,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """MODO PRESERVACAO: grava codigo-fonte VERBATIM, sem marca e sem editor.
 
@@ -1146,8 +1669,13 @@ class Tools:
 
         :param conteudo: o arquivo INTEIRO ja editado (string), tal como deve ser salvo.
         :param ext: extensao da familia texto/codigo (html/css/js/json/xml/md/txt/csv).
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             # NAO passa por _coerce: ele faz json.loads e um arquivo .json literal viraria
             # um dict reserializado (aspas trocadas) - o oposto de "verbatim". Codigo e
@@ -1166,13 +1694,14 @@ class Tools:
                                 self.valves.ECOSSISTEMA_PADRAO)
             data = c.encode("utf-8")
             link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
-            return "Arquivo gerado com sucesso. Link para download: " + link
+            return "Arquivo gerado com sucesso. " + link
         except Exception:
             return _erro_limpo("gerar_codigo")
 
     async def gerar_html(
         self, titulo: str, html: str, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1, imagens: list = None
+        ecossistema: str = "", versao: int = 1, imagens: list = None,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """Gera um arquivo HTML (.html) e devolve um link de download.
 
@@ -1182,8 +1711,13 @@ class Tools:
         :param versao: numero de versao para o nome do arquivo (padrao 1).
         :param imagens: imagens ANEXADAS PELO USUARIO. O modelo posiciona o marcador
             (IMAGEM_1) no HTML e aqui ele vira a imagem embutida em base64.
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             conteudo = _coerce(html)
             conteudo = conteudo if isinstance(conteudo, str) else str(conteudo or "")
@@ -1224,13 +1758,14 @@ class Tools:
             link = await _salvar_e_linkar(
                 data, nome, "text/html", _get_user_id(__user__)
             )
-            return "Arquivo gerado com sucesso. Link para download: " + link
+            return "Arquivo gerado com sucesso. " + link
         except Exception:
             return _erro_limpo("gerar_html")
 
     async def gerar_apresentacao_html(
         self, titulo: str, slides: list, __user__: dict = None,
-        ecossistema: str = "", versao: int = 1, imagens: list = None
+        ecossistema: str = "", versao: int = 1, imagens: list = None,
+        __event_emitter__=None, __message_id__: str = None
     ) -> str:
         """Gera uma APRESENTACAO em HTML navegavel (deck) com a identidade Nidum.
 
@@ -1241,8 +1776,13 @@ class Tools:
         :param ecossistema: sigla do ecossistema para a nomenclatura oficial (opcional).
         :param versao: numero de versao para o nome do arquivo (padrao 1).
         :param imagens: imagens ANEXADAS PELO USUARIO, na ordem dos marcadores.
-        :return: link /api/v1/files/{id}/content para baixar o arquivo.
+        :return: um link markdown pronto, ja no formato "[Clique aqui para baixar
+            <nome>](<url>)". REPRODUZA ESSE LINK EXATAMENTE COMO RECEBIDO - copie e
+            cole, sem reescrever, sem encurtar e sem remover a barra inicial da URL.
+            Um caractere a menos quebra o download (o navegador resolve o caminho
+            relativo a pagina do chat e devolve 404).
         """
+        _ctx_entrega(__event_emitter__, __message_id__)
         try:
             return await self._apresentacao_html(
                 titulo, slides, __user__, ecossistema, versao, imagens
@@ -1261,6 +1801,9 @@ class Tools:
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_apresentacao_html", "slides", raw)
+        slides, erro = _normalizar_corpo_slides(slides, "gerar_apresentacao_html")
+        if erro:
+            return erro
         imgs = _normalizar_imagens(imagens)
 
         # Nome ANTES da montagem (o editor precisa dele para o download).
@@ -1275,6 +1818,7 @@ class Tools:
                     _font_face("MaximaNouva-Regular.ttf", 400),
                     _font_face("MaximaNouva-SemiBold.ttf", 600),
                     _font_face("MaximaNouva-Bold.ttf", 700),
+                    _font_face("MaximaNouva-ExtraBold.ttf", 800),
                     _font_face("MaximaNouva-Italic.ttf", 400, "italic"),
                     _font_face("Ibrand.ttf", "100 900", "normal", "Ibrand"),
                 ]
@@ -1291,7 +1835,7 @@ class Tools:
 
             partes = []
             for s in slides:
-                tipo = (s.get("tipo") or "conteudo").lower()
+                tipo = _fold(s.get("tipo")) or "conteudo"
                 partes.append(
                     _slide_html(
                         s, tipo, mapa, cores_secao, cores_cartao, sec, logo_t, logo_a
@@ -1343,7 +1887,7 @@ class Tools:
         link = await _salvar_e_linkar(
             data, nome, "text/html", _get_user_id(__user__)
         )
-        return "Arquivo gerado com sucesso. Link para download: " + link
+        return "Arquivo gerado com sucesso. " + link
 
     async def _pptx(self, titulo, slides, marca, __user__,
                     ecossistema="", versao=1, imagens=None):
@@ -1351,6 +1895,9 @@ class Tools:
         slides = _itens_loose(slides, _texto_para_slide)
         if not slides:
             return _diag_entrada_vazia("gerar_pptx", "slides", raw_slides)
+        slides, erro = _normalizar_corpo_slides(slides, "gerar_pptx")
+        if erro:
+            return erro
         imgs = _normalizar_imagens(imagens)
 
         def _montar():
@@ -1500,7 +2047,7 @@ class Tools:
                     add_logo(sl, "terracota", Inches(11.1), Inches(6.8), Inches(1.6))
 
             for s in slides:
-                tipo = (s.get("tipo") or "conteudo").lower()
+                tipo = _fold(s.get("tipo")) or "conteudo"
                 slide = prs.slides.add_slide(blank)
                 cor_titulo = verde if marca else preto
                 cor_corpo = preto
@@ -1715,7 +2262,7 @@ class Tools:
         nome = _nome_padrao(titulo, ecossistema, "pptx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
-        return "Arquivo gerado com sucesso. Link para download: " + link
+        return "Arquivo gerado com sucesso. " + link
 
     async def _xlsx(self, titulo, planilhas, marca, __user__,
                     ecossistema="", versao=1):
@@ -1805,7 +2352,7 @@ class Tools:
         nome = _nome_padrao(titulo, ecossistema, "xlsx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
-        return "Arquivo gerado com sucesso. Link para download: " + link
+        return "Arquivo gerado com sucesso. " + link
 
     async def _docx(self, titulo, secoes, marca, __user__,
                     ecossistema="", versao=1, imagens=None):
@@ -1937,7 +2484,7 @@ class Tools:
         nome = _nome_padrao(titulo, ecossistema, "docx", versao, self.valves.ECOSSISTEMA_PADRAO)
         ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         link = await _salvar_e_linkar(data, nome, ct, _get_user_id(__user__))
-        return "Arquivo gerado com sucesso. Link para download: " + link
+        return "Arquivo gerado com sucesso. " + link
 
     async def _pdf(self, titulo, secoes, marca, __user__,
                    ecossistema="", versao=1, imagens=None):
@@ -1983,6 +2530,7 @@ class Tools:
             try:
                 reg = _font_path("MaximaNouva-Regular.ttf")
                 bold = _font_path("MaximaNouva-Bold.ttf")
+                xbold = _font_path("MaximaNouva-ExtraBold.ttf")
                 ib = _font_path("Ibrand.ttf")
                 if reg:
                     pdfmetrics.registerFont(TTFont("MaximaNouva", reg))
@@ -1990,6 +2538,10 @@ class Tools:
                 if bold:
                     pdfmetrics.registerFont(TTFont("MaximaNouva-Bold", bold))
                     FONT_B = "MaximaNouva-Bold"
+                # ExtraBold: o brandbook cita o peso e o arquivo existe no build desde
+                # 13/07, mas nunca era registrado - ficava inerte no disco.
+                if xbold:
+                    pdfmetrics.registerFont(TTFont("MaximaNouva-ExtraBold", xbold))
                 if reg and bold:
                     pdfmetrics.registerFontFamily(
                         "MaximaNouva", normal="MaximaNouva", bold="MaximaNouva-Bold"
@@ -2156,4 +2708,4 @@ class Tools:
         link = await _salvar_e_linkar(
             data, nome, "application/pdf", _get_user_id(__user__)
         )
-        return "Arquivo gerado com sucesso. Link para download: " + link
+        return "Arquivo gerado com sucesso. " + link

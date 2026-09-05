@@ -85,9 +85,9 @@ Configuráveis ao vivo via `POST /api/v1/functions/id/chatnd/valves/update`.
 | `MODELO_DIADIA` | Motor da rota dia a dia | `nidum-10---dia-a-dia` | idem |
 | `MODELO_DOCUMENTOS` | Motor da rota documentos | `nidum-10---documentos` | idem |
 | `MODELO_RACIOCINIO` | Motor da rota raciocínio | `nidum-20---raciocinio` | idem |
-| `BASE_CONHECIMENTO_ID` | Base de conhecimento (RAG) | `f2c8a48c...` ⚠️ (base morta) | **`a85d8a8f...`** (via valve) |
+| `BASE_CONHECIMENTO_ID` | Base de conhecimento (RAG) | **vazio** — o default morto foi removido; o id vivo mora no painel | ⚠️ **as DUAS coleções citadas aqui (`f2c8a48c` e `a85d8a8f`) foram apagadas** por decisão de produto. O `MAPA_COLECOES` substituiu esta valve. |
 | `TOP_K_DOCUMENTOS` | Quantos trechos buscar p/ rankear | `10` | idem |
-| `MAX_DOCS_INTEIROS` | Quantos documentos inteiros injetar | `2` | idem |
+| `MAX_DOCS_INTEIROS` | Quantos documentos inteiros injetar | **`0`** — documento inteiro **aposentado** em 16/07/2026 (`chatnd 1.23.0`, commit `e7232ec2`). O `2` desta tabela ficou vencido por sete semanas. | **verificar no painel** — o default do código não prova o valor efetivo (D24) |
 | `MAX_CHARS_TOTAL` | Teto de caracteres injetados | `200000` | idem |
 | `MOSTRAR_ROTA` | Mostra "ChatND encaminhou para..." | `False` | idem |
 | `TRIADE_ATIVA` | Liga/desliga a voz da tríade | `True` | idem |

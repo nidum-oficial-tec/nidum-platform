@@ -51,7 +51,7 @@ async def main():
 
     print("== gerar_codigo grava o codigo VERBATIM ==")
     r = await t.gerar_codigo("Vistoria", APP, "html", None)
-    ok &= check("devolve link", "Link para download" in r)
+    ok &= check("devolve link", "/local/" in r)
     nome = [n for n in _gravados if n.endswith(".html")][0]
     data, ct = _gravados[nome]
     saida = data.decode("utf-8")
