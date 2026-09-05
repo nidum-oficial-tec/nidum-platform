@@ -13,6 +13,91 @@
 
 ---
 
+## 2026-09-03 — FASE A FECHADA: do roteador ao agente (preset agêntico validado)
+
+**O ChatND ganhou um caminho agêntico funcional, em paralelo ao pipe, sem tocar em produção.**
+O preset `ChatND Agente (beta)` roda em `claude-sonnet-4-6` (mesmo modelo da produção — a
+comparação é pura, só a arquitetura muda), Native Mode, builtin tools ligadas.
+
+### O que a Fase A provou
+
+- **Tool-calling funciona em Claude E OpenAI em modo Native.** O DESCARTADO de 30/07
+  (`'str' object has no attribute 'get'`) **nunca descreveu este caminho**: ele fala de
+  tool-calling *de dentro do pipe* em Legacy (a entrada diz "o pipe nem declara
+  `__tools__`", e `git log -S "__tools__"` no `chatnd.py` não retorna nenhum commit).
+  Segue valendo para quem tentar aquilo; não vale para o preset. Ver D22.
+- **Modo 1 (sem pasta) funciona**: o agente descobre as 7 coleções sozinho via
+  `list_knowledge_bases`, sem conhecimento anexado.
+- **A parede se sustenta com procedência declarada**, tendo a ferramenta na mão — ver D23.
+- **Fase C entregue**: as três skills da marca importadas e ativas. Elas resolveram o
+  visual do PPTX (paleta, logo, capa, encerramento).
+
+### Testes de aceite: 6 de 7 passaram; a falha era prevista
+
+| # | Resultado |
+|---|---|
+| 1 | **Falhou como previsto** — leu **4 atas de 108** na coleção Reuniões. Não fingiu completude: disse "10 pendências nas 4 atas". **~96% do acervo não foi visto — esta é a medida da Fase D.** |
+| 2 | Passou. Declarou explicitamente que a causa raiz do atraso **não consta** nos documentos. |
+| 3 | Passou (no A.5-bis, com web ligada) — ver D23. |
+| 4-6 | Passaram. |
+| 7 | Passou, e é o mais importante: tentou **grep, search e query** antes de desistir. **Não inventou.** |
+
+### Números que ficam como linha de base
+
+- **Volume das coleções:** `nd-normas` 320 · `Reuniões` 108 · `Fonte` 83 · `nd-externo` 20 ·
+  `Projetos` 19 · `nd-contratos` 5 · `Brandbook` 4.
+- **Ambição de deck:** pipe **18 slides / 6.892 chars** × agente **10 / 1.932** = **28%**.
+  O corpo voltou, mas o agente entrega um terço do conteúdo. **Não é defeito da tool** — é
+  ambição de deck, e é **meta mensurável para a revisão da `apresentacao-nidum`**.
+- **Teste da parede:** 3 buscas externas, **zero vazamento na query** (a busca interna usou
+  "modelo de cooperativa Nidum"; as externas, só termos públicos). Leu fonte primária
+  (`planalto.gov.br`).
+- **Regressão em produção:** o `chatnd` respondeu "intenção reta" pela Fonte com citação,
+  encaminhando para Documentos. Sem mudança.
+
+### Três defeitos da tool, todos da mesma classe
+
+Os três vieram do mesmo deslocamento — **consumidor generativo nas duas pontas** (D22):
+a tool foi desenhada para o pipe, que montava a entrada por schema e repassava a saída
+*verbatim*; no laço o **modelo** escreve a entrada e transcreve a saída.
+
+1. **Link 404.** Duas correções fecharam duas portas e abriram outras (sumiu a barra
+   inicial → `/c/api/...`; depois o parêntese do markdown vazou para dentro da URL).
+   **Conserto real:** anexo nativo por `__event_emitter__` — o arquivo vira card de
+   download e o endereço **nunca passa pelo modelo** (tool 2.8.0).
+2. **PPTX mudo.** Todas as caixas de corpo vazias. **Conserto:** portar para a docstring
+   o schema que já funcionava no `chatnd.py:1420` (8 tipos, nomes de campo, "nunca pode
+   vir vazio"). **Evidência que fecha o caso: 18 × 10 slides, mesmo modelo, mesmo pedido,
+   mesma base — a única diferença era a interface descrita.** Não era capacidade do
+   modelo. Depois, a telemetria mostrou que o modelo mandava `corpo` porque **a docstring
+   dizia "corpo" 5x como conceito e `'texto'` 3x como campo** — a causa era o nome, não o
+   vocabulário dele (tool 2.8.2).
+3. **HTML fora da marca.** O CSS da marca entrava antes de `</head>` e o do modelo vencia
+   por cascata. **Conserto:** bloco-guarda do chrome inserido por último + remoção de
+   `@import` externo (que quebrava o offline garantido pelo base64 das fontes).
+
+**Propriedade registrada como desejada:** a mensagem de recusa **ensina**. A validação
+recusa sempre no slide 3 e o modelo acerta do 4º em diante — **uma recusa por geração, não
+uma por slide**. Recusar sem ensinar geraria laço até o teto de iterações.
+
+**Sobre a suíte:** `teste_anexo_nativo.py` (escrito antes da publicação) pegou **três**
+problemas, incluindo um contrato de prosa que teria desligado a oferta de formatos em
+produção **em silêncio** (`chatnd.py:5773` decide por `if "Link para download" in saida`).
+Nenhuma leitura de código teria pego. **Escrever o teste antes valeu mais que as três
+correções** — padrão a manter no `conferir_registros.py`.
+
+### O que a Fase A deixa em aberto
+
+- **Treze registros que descrevem coisas revogadas ou apagadas** (valves, coleções,
+  wrappers, e um deles **nos dados**: o cabeçalho carimbado pela esteira). Origem comum em
+  D24 — configuração mora no banco e não deixa rastro em commit. Motiva o
+  `conferir_registros.py`.
+- **Enumeração** ("todas as", "quantas") continua fora do alcance: é a Fase D.
+- Fila da limpeza da Fase 1 (código órfão) e as descrições das sete coleções — provavelmente
+  a maior alavanca de precisão barata que sobrou.
+
+---
+
 ## 2026-08-18 (modo autônomo) — Fase 1 (2→7 coleções): T1–T3 em branches, sem publish
 
 **Sessão autônoma (~1h30). Nada em produção, nada em `main`, tudo em `feat/*` para aceite.**
