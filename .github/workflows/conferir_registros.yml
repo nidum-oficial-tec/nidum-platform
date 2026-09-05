@@ -57,11 +57,18 @@ jobs:
           OPENWEBUI_BASE_URL: ${{ secrets.OPENWEBUI_BASE_URL }}
           OPENWEBUI_API_KEY: ${{ secrets.OPENWEBUI_API_KEY }}
         run: |
-          EST="_esteira"
-          [ -d "$EST/_scripts" ] || EST=""
+          # CAMINHO ABSOLUTO, e sem montar o argumento por expansao condicional.
+          # A primeira versao usava ${EST:+--esteira "$EST"}: alem do `[ -d ]`
+          # relativo, essa expansao passa as ASPAS como caractere literal quando
+          # nao vazia, e o script receberia um caminho entre aspas que nao existe.
+          # Duas armadilhas de shell numa linha que so escolhia entre dois casos.
+          # Agora o caminho e SEMPRE passado, e QUEM DECIDE E O SCRIPT - que ja
+          # sabe relatar "nao conferida" quando a pasta nao existe.
+          EST="$GITHUB_WORKSPACE/_esteira"
+          ls -d "$EST/_scripts" || echo "esteira AUSENTE em $EST"
           set +e
           python _nidum_manutencao/conferir_registros.py \
-            ${EST:+--esteira "$EST"} --nota "$RUNNER_TEMP/nota.md" \
+            --esteira "$EST" --nota "$RUNNER_TEMP/nota.md" \
             2>&1 | tee "$RUNNER_TEMP/saida.txt"
           RC=${PIPESTATUS[0]}
           set -e
