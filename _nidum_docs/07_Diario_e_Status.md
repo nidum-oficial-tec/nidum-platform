@@ -67,80 +67,87 @@ Quatro pastas-mae ficam **declaradas como excluidas**: `0 - Comece por aqui`,
 eixo novo fica em **26,7%**. E a expectativa estava invertida - o grosso vai para
 **Produtos**, nao para Operacoes.
 
-### Onde a migracao parou
+### A migracao foi CONCLUIDA no mesmo dia
 
-| passo | estado |
+| passo | resultado |
 |---|---|
-| 1 - relatorio de orfaos | **zero**, 524 arquivos, sete colecoes |
-| 2 - carga do SharePoint | **`resync` em andamento** ao fim do dia |
-| 3 - codigo do roteamento | PR aberto, com simulacao |
-| 4 a 9 | **nao iniciados** - dependem de merge e de decisao |
+| 1 - orfaos antes | 0 e 0, 543 arquivos em 7 colecoes |
+| 2 - carga (`resync`) | **falhou** e foi re-executada; ver abaixo |
+| 3 - codigo e config | o corte foi o merge do `sync_config.json` |
+| 4 - rodada A | **379 adicionados, 0 removidos, 0 freios** |
+| 5 - conferencia | 0 e 0 nas nove |
+| **6 - `MAPA_COLECOES`** | **NAO FEITO** - valve do painel, exige credencial |
+| 7 - rodada B | **34 removidos**, freio `AUTORIZADO` (9 eventos, 31%) |
+| 8 - restaurar e conferir | `FRAC_CATASTROFE` de volta a `0.25`; **0 e 0** |
+| 9 - apagar as 5 antigas | do Davi; elas seguem intactas, 349 arquivos |
 
-**Bloqueio conhecido:** a rodada A nao pode comecar sem o `sync_config.json` novo na
-`main`, e isso e um merge. Com a regra de "nada mergeado" durante a ausencia, a
-migracao esta parada no passo 3 **por construcao, e nao por falha**.
+**Contagens finais** - 539 indexados, contra 543 antes. A diferenca de 4 sao
+arquivos das quatro pastas-mae agora DECLARADAS como excluidas.
 
-### O que a preparacao do dia produziu
+| base | arquivos |
+|---|---:|
+| Produtos | 141 |
+| Tecnologia | 107 |
+| 1 - Fonte | 85 |
+| Operacoes | 84 |
+| 3 - Reunioes | 75 |
+| Gestao de Projetos | 19 |
+| Marketing | 15 |
+| Academia | 10 |
+| Sustentabilidade | 2 |
+| Juridico | 1 |
 
-- **Roteamento pelo carimbo, nao pelo caminho do repo.** A pasta `PROD/` guarda 11
-  arquivos cuja origem e `3 - Reunioes/Atas`. Uma tabela sigla -> pasta os mandaria
-  para Produtos, com aparencia de acerto.
-- **Nao existe `padrao`.** Arquivo sem base para a rodada, com o nome do arquivo, o
-  da pasta e as duas saidas na tela.
-- **`ecossistema` no carimbo** (a pasta-mae), ja na `main`.
-- **Freio medido:** a rodada B remove 34 de 109 em `3 - Reunioes` - 31,2%, acima do
-  limiar de catastrofe, que bloqueia **mesmo confirmado**. Exige
-  `FRAC_CATASTROFE=0.35` naquela rodada, e restaurar depois.
-- **As cinco colecoes antigas nao sao esvaziadas** - congelam como ponto de reversao.
-  Esvaziar dispara `BLOQUEIA_ESVAZIAR`, que nao tem excecao.
+### As duas re-execucoes, e o que cada uma revelou
 
-### O `resync` FALHOU - e virou o primeiro caso real do alarme
+**A primeira (17:08) provou que a via 3 do D28 se cura sozinha.** O `resync`
+abortou num erro de API - `400 We could not find what you're looking for` ao
+atualizar um documento cujo id a colecao nao resolvia mais. Ficaram 17 arquivos de
+`nd-normas` fora do indice, com o repo ja avancado. A re-execucao os retomou sem
+intervencao nenhuma: `novos:17 -> adicionados:17`. **O plano e recalculado do zero
+a cada rodada** - e isso deixou de ser teoria.
 
-A carga do passo 2 rodou em modo `resync` (reconverte tudo, nunca remove) e
-**abortou no meio da sincronizacao**:
+**A segunda (18:03) nao foi da esteira: foi da ferramenta de conferencia.** Logo
+apos o corte, o relatorio acusou **573 orfaos com `repo:0` em todas as dez bases**.
+A base estava certa; a rodada A tinha acabado de escrever 379 arquivos. Errado
+estava o relatorio, que particionava pelas chaves `nd-*` enquanto a esteira ja
+escrevia pelo eixo novo - o "desejado" virava zero, e tudo que estava na base
+parecia orfao.
 
-```
-ERRO ao atualizar 'Tecnologia > ... > NIDUM_Editor_Fluxograma_v17.md'
-(colecao 'ND - Normas e governanca'): 400 {"detail":"We could not find what
-you're looking for :/"}
-```
+> **Principio, e vale alem deste caso: ferramenta de conferencia que erra sozinha e
+> pior que ferramenta ausente.** Ausente, ninguem confia nela. Errada, ela gasta a
+> confianca de quem for ler o proximo alarme - que pode ser verdadeiro. O conserto
+> nao foi ensinar o eixo novo ao relatorio: foi faze-lo ler **o mesmo interruptor**
+> que a esteira le. Duas copias de uma decisao divergem; a pergunta certa e sempre
+> quem e a fonte.
 
-Um id de arquivo que a colecao nao resolve mais. **Nao e freio** - e falha de API,
-a **via 3** das cinco vias de nascimento de orfao do D28. A propria mensagem do
-codigo diz o que fazer: *"a proxima execucao reconstroi o plano a partir da
-colecao e o retoma sozinha"*.
+### O alarme que nao disparou, e por que isso e a resposta certa
 
-**O estado que ficou** - e ele e exatamente o que o D28 descreve:
+O alarme de defasagem (D31) rodou as 04:20, 10:30, 15:08 e 17:18, e **nao abriu
+issue**. Havia defasagem real - 17 arquivos - entre 16:56 e 17:08: **doze minutos**,
+contra o limite de 12h. Ele estava certo em ficar calado, e teria aberto a issue
+atribuida se ninguem tivesse agido. **A primeira prova do N=12h veio de um caso que
+ninguem plantou.**
 
-| | |
-|---|---|
-| commit da carga | **entrou** no repo (`0a5bedb`), 649 `.md` |
-| sincronizacao | **abortada**, indice congelado |
-| orfaos | **zero** - nada sobrando na base |
-| **faltando no indice** | **17** em `nd-normas` (indice 286, repo 303) |
+Quem avisou foi outro mecanismo: o passo "Falha -> Issue" do `puxar_sharepoint`
+abriu a issue #154 as 16:56. Ela foi fechada as 18:08 com o registro do que
+aconteceu e de como fechou - para "issue aberta" continuar significando uma coisa
+so: problema **agora**.
 
-**Repo avancou, indice nao.** Nao ha nada a desfazer: o plano e recalculado do zero
-a cada rodada, entao a proxima retoma os 17 sozinha. **Nao foi re-executado** - a
-regra da ausencia manda parar e registrar, e uma rodada que falhou no meio nao se
-conserta as cegas.
+### INCIDENTE EVITADO: a rodada A disparou sozinha
 
-**E o primeiro teste nao planejado do alarme de defasagem** (D31, no ar desde o
-merge do PR #149): ha commit de `.md` na `main` mais novo que a ultima escrita
-bem-sucedida. Se ninguem rodar a esteira, ele abre a issue atribuida em **12h**.
-E a checagem funcionando sobre um caso que ninguem plantou.
+**Nao e sucesso - funcionou por acaso.** O merge do corte tocava um `.md` (o
+`LEIA.md` do arquivamento do residuo), e o `sincronizar.yml` dispara em push com
+`**/*.md`. A rodada A executou **antes** do dry-run que eu tinha programado para
+conferi-la.
 
-**Achado sobre a propria ferramenta, e vale conserto:** o relatorio de orfaos
-imprime `indice:286 repo:303` lado a lado, mas **conta zero e diz "zero"** - ele
-mede orfao (sobra na base) e nao mede FALTANTE (sobra no repo). Quem le em
-diagonal ve "ORFAOS: 0" e passa direto pelos 17. As duas metades da divergencia
-merecem o mesmo destaque. **Nao consertei** - registrar antes de mexer, para a
-leitura ser conferida antes de virar codigo.
+Deu certo, e por isso e mais perigoso: **se o corte tivesse um defeito, ele teria
+ido a producao sem simulacao nenhuma**. Qualquer PR que toque um `.md` - inclusive
+um PR so de documentacao - dispara escrita na base.
 
-**Efeito colateral do modo aditivo:** o `Descritivo do Processo` de Suprimentos
-existe agora em DOIS caminhos no repo - o novo (`Operacoes > Suprimentos e
-Fornecedores`, com `ecossistema: Operacoes`) e o antigo, que o `resync` nao remove
-por desenho. O antigo vai aparecer como "sem destino" na simulacao do eixo ate uma
-rodada com remocao passar.
+**Decisao do Davi:** restringir o `paths` do gatilho as pastas de conteudo,
+excluindo `_arquivo/`, `_docs/` e o que nao for acervo indexavel. Despacho manual
+foi recusado por reintroduzir o "alguem precisa lembrar" - e o alarme de defasagem
+ja cobre o risco que ele evitaria.
 
 ### Registrado no mesmo dia
 
@@ -149,6 +156,91 @@ incidente de governanca que **nao** existia), D35 (as bases ficam sem descricao)
 
 ---
 
+
+## 2026-09-03 — FASE A FECHADA: do roteador ao agente (preset agêntico validado)
+
+**O ChatND ganhou um caminho agêntico funcional, em paralelo ao pipe, sem tocar em produção.**
+O preset `ChatND Agente (beta)` roda em `claude-sonnet-4-6` (mesmo modelo da produção — a
+comparação é pura, só a arquitetura muda), Native Mode, builtin tools ligadas.
+
+### O que a Fase A provou
+
+- **Tool-calling funciona em Claude E OpenAI em modo Native.** O DESCARTADO de 30/07
+  (`'str' object has no attribute 'get'`) **nunca descreveu este caminho**: ele fala de
+  tool-calling *de dentro do pipe* em Legacy (a entrada diz "o pipe nem declara
+  `__tools__`", e `git log -S "__tools__"` no `chatnd.py` não retorna nenhum commit).
+  Segue valendo para quem tentar aquilo; não vale para o preset. Ver D22.
+- **Modo 1 (sem pasta) funciona**: o agente descobre as 7 coleções sozinho via
+  `list_knowledge_bases`, sem conhecimento anexado.
+- **A parede se sustenta com procedência declarada**, tendo a ferramenta na mão — ver D23.
+- **Fase C entregue**: as três skills da marca importadas e ativas. Elas resolveram o
+  visual do PPTX (paleta, logo, capa, encerramento).
+
+### Testes de aceite: 6 de 7 passaram; a falha era prevista
+
+| # | Resultado |
+|---|---|
+| 1 | **Falhou como previsto** — leu **4 atas de 108** na coleção Reuniões. Não fingiu completude: disse "10 pendências nas 4 atas". **~96% do acervo não foi visto — esta é a medida da Fase D.** |
+| 2 | Passou. Declarou explicitamente que a causa raiz do atraso **não consta** nos documentos. |
+| 3 | Passou (no A.5-bis, com web ligada) — ver D23. |
+| 4-6 | Passaram. |
+| 7 | Passou, e é o mais importante: tentou **grep, search e query** antes de desistir. **Não inventou.** |
+
+### Números que ficam como linha de base
+
+- **Volume das coleções:** `nd-normas` 320 · `Reuniões` 108 · `Fonte` 83 · `nd-externo` 20 ·
+  `Projetos` 19 · `nd-contratos` 5 · `Brandbook` 4.
+- **Ambição de deck:** pipe **18 slides / 6.892 chars** × agente **10 / 1.932** = **28%**.
+  O corpo voltou, mas o agente entrega um terço do conteúdo. **Não é defeito da tool** — é
+  ambição de deck, e é **meta mensurável para a revisão da `apresentacao-nidum`**.
+- **Teste da parede:** 3 buscas externas, **zero vazamento na query** (a busca interna usou
+  "modelo de cooperativa Nidum"; as externas, só termos públicos). Leu fonte primária
+  (`planalto.gov.br`).
+- **Regressão em produção:** o `chatnd` respondeu "intenção reta" pela Fonte com citação,
+  encaminhando para Documentos. Sem mudança.
+
+### Três defeitos da tool, todos da mesma classe
+
+Os três vieram do mesmo deslocamento — **consumidor generativo nas duas pontas** (D22):
+a tool foi desenhada para o pipe, que montava a entrada por schema e repassava a saída
+*verbatim*; no laço o **modelo** escreve a entrada e transcreve a saída.
+
+1. **Link 404.** Duas correções fecharam duas portas e abriram outras (sumiu a barra
+   inicial → `/c/api/...`; depois o parêntese do markdown vazou para dentro da URL).
+   **Conserto real:** anexo nativo por `__event_emitter__` — o arquivo vira card de
+   download e o endereço **nunca passa pelo modelo** (tool 2.8.0).
+2. **PPTX mudo.** Todas as caixas de corpo vazias. **Conserto:** portar para a docstring
+   o schema que já funcionava no `chatnd.py:1420` (8 tipos, nomes de campo, "nunca pode
+   vir vazio"). **Evidência que fecha o caso: 18 × 10 slides, mesmo modelo, mesmo pedido,
+   mesma base — a única diferença era a interface descrita.** Não era capacidade do
+   modelo. Depois, a telemetria mostrou que o modelo mandava `corpo` porque **a docstring
+   dizia "corpo" 5x como conceito e `'texto'` 3x como campo** — a causa era o nome, não o
+   vocabulário dele (tool 2.8.2).
+3. **HTML fora da marca.** O CSS da marca entrava antes de `</head>` e o do modelo vencia
+   por cascata. **Conserto:** bloco-guarda do chrome inserido por último + remoção de
+   `@import` externo (que quebrava o offline garantido pelo base64 das fontes).
+
+**Propriedade registrada como desejada:** a mensagem de recusa **ensina**. A validação
+recusa sempre no slide 3 e o modelo acerta do 4º em diante — **uma recusa por geração, não
+uma por slide**. Recusar sem ensinar geraria laço até o teto de iterações.
+
+**Sobre a suíte:** `teste_anexo_nativo.py` (escrito antes da publicação) pegou **três**
+problemas, incluindo um contrato de prosa que teria desligado a oferta de formatos em
+produção **em silêncio** (`chatnd.py:5773` decide por `if "Link para download" in saida`).
+Nenhuma leitura de código teria pego. **Escrever o teste antes valeu mais que as três
+correções** — padrão a manter no `conferir_registros.py`.
+
+### O que a Fase A deixa em aberto
+
+- **Treze registros que descrevem coisas revogadas ou apagadas** (valves, coleções,
+  wrappers, e um deles **nos dados**: o cabeçalho carimbado pela esteira). Origem comum em
+  D24 — configuração mora no banco e não deixa rastro em commit. Motiva o
+  `conferir_registros.py`.
+- **Enumeração** ("todas as", "quantas") continua fora do alcance: é a Fase D.
+- Fila da limpeza da Fase 1 (código órfão) e as descrições das sete coleções — provavelmente
+  a maior alavanca de precisão barata que sobrou.
+
+---
 
 ## 2026-08-18 (modo autônomo) — Fase 1 (2→7 coleções): T1–T3 em branches, sem publish
 
