@@ -47,6 +47,7 @@
 | D36 | **Pasta-mãe que vai receber conteúdo ganha base ANTES, não depois** (05/09/2026) — reverte a decisão tomada horas antes | `Plataformas Regionais` tinha **um** arquivo, e ele era cópia de algo já indexado em Tecnologia. Com esse dado, decidi mantê-la **excluída**: criar base para hospedar uma cópia acrescentaria um nome a mais no `list_knowledge_bases` e uma chance a mais de o agente escolher errado, em troca de zero conteúdo novo. **O Davi reabriu, e está certo:** a pasta vai receber conteúdo próprio em breve, e *“a decisão de manter excluída foi tomada com o dado de hoje, e o dado de amanhã é diferente”*. **A regra que fica:** pasta-mãe vazia hoje que **vai** receber conteúdo ganha base **antes** — para o primeiro arquivo já entrar no lugar certo, em vez de cair na exclusão e só ser notado quando alguém procurar por ele e não achar. **O que eu errei, e vale mais que o caso:** decidi com o inventário de hoje uma questão que era sobre a **intenção de uso da pasta** — e essa informação não está no acervo, está em quem organiza o SharePoint. Contagem de arquivos responde “o que há”; não responde “o que vai haver”, e eu usei a primeira para responder a segunda. **Irmão do D35:** lá a decisão foi não descrever porque descrição-inventário envelhece; aqui, não decidir escopo por inventário pela mesma razão. **O único arquivo atual continua sendo cópia do que está em Tecnologia, e isso é a pasta refletida, não defeito** — a base espelha a pasta, e duplicata entre pastas é fato do SharePoint, não erro de roteamento. |
 | D37 | **Conferência que compara zero com zero é verde permanente sem cobertura — e só rodar contra dado real, desconfiando do verde, pega** (05/09/2026) — palavras do Davi; a lição mais cara do conferidor | **O caso, e ele apareceu duas vezes no mesmo dia, por portas diferentes.** (1) A classe `base_indevida` procurava os nomes das pastas **declaradas como excluídas** dentro das contagens das coleções **configuradas**. Pasta excluída não tem coleção configurada, **por construção** — a interseção era sempre vazia. (2) A coleta lia `data.file_ids` de `/knowledge/{id}`, o campo **legado** que o `file/add` não atualiza: devolveria **zero** para toda base com arquivos vinculados, e zero é exatamente o valor que a classe considera correto. **Nos dois, a comparação era zero contra zero, e o resultado era verde permanente.** **Por que nenhuma revisão pega:** o código está certo linha a linha; o teste passa — as fixtures colocavam o mesmo nome nos dois lados, um mundo que não existe; e o relatório diz “nada encontrado”, que é a resposta que se espera de um sistema saudável. **Um teste com fixture inventada prova que o código faz o que o código faz.** **O que pega:** rodar contra dado real e, ao ver verde, **perguntar por que está verde**. Foi assim que os dois apareceram — o relatório voltou limpo e fui conferir o motivo do limpo. **A regra operável:** para toda conferência nova, escrever **o caso que a faria falhar** e prová-lo com dado do mundo real antes de confiar no verde; e desconfiar em especial de comparação cujo lado esperado é **vazio, zero ou ausente**, porque nela o acerto e a cegueira têm a mesma aparência. **Família:** irmão do D26 (fixture que descreve mundo inexistente dá confiança falsa) e do princípio de que **ferramenta de conferência que erra sozinha é pior que ferramenta ausente** — aqui ela não erra, ela **acerta sem olhar**, que é mais difícil de flagrar. |
 | D38 | **Escrever a prova é a última conferência** (05/09/2026) — observação do Davi sobre o método, depois de o padrão se repetir dia após dia | **O padrão:** o defeito apareceu **enquanto se escrevia o registro**, e não enquanto se escrevia o código. Os casos que dá para apontar no documento: **04/09** — ao mapear as cinco vias de nascimento de órfão para o D28, apareceu que o passo *“Rodada OK → fecha a issue”* não tinha guarda de `dry_run`, e que a simulação prudente teria fechado a issue sem pagar a dívida; **05/09** — ao escrever o D37, ao invés de só citar o endpoint errado, fui conferir *por que* a classe estava verde e achei a segunda cegueira, a interseção vazia por construção; **05/09** — ao redigir o corpo do PR do conserto anterior, apareceu que a mensagem de “não conferida” culpava a credencial mesmo quando ela estava presente. **Por que funciona, e não é acaso:** escrever a prova obriga a responder *por que isto está certo* em vez de *isto parece certo*. A revisão lê o código e confirma que ele faz o que diz; a redação do registro obriga a defender que **o que ele diz é o que precisava ser feito** — e é nessa distância que o defeito mora. **O corolário prático:** o registro não é burocracia depois do trabalho; é **a última passada de conferência**, e por isso se escreve **antes** de dar a tarefa por encerrada, nunca depois. Um PR cujo corpo não consegue explicar por que a mudança está certa não está pronto para merge — mesmo com a suíte verde. **Fecha a família:** o D26 diz que teste pega o que leitura não pega; o D37 diz que rodar contra dado real pega o que teste não pega; este diz que **escrever pega o que rodar não pega** — porque rodar mostra o que acontece, e escrever obriga a dizer o que **deveria** acontecer. |
+| D39 | **Renomear no painel não deixa rastro, e o nome de exibição é o que as pessoas leem — três leram “revogado” onde havia “renomeado”** (05/09/2026) — caso do D24 | O `MODELO_GERAL` apontava para `nidum-10---dia-a-dia`, e **três pessoas** concluíram, em momentos diferentes, que era default morto apontando para wrapper revogado. **Falso.** O wrapper nunca foi revogado: foi **renomeado** para **“Nidum 1.0 - Geral”**, e o **id permaneceu o mesmo**. Verificado abrindo o modelo no painel. **Nada havia para trocar nem apagar** — valve correta, default correto. **Por que os três erraram junto:** o id `...dia-a-dia` descreve um nome que **só existiu no passado**, e ninguém tem como saber disso lendo código ou doc. Renomear no painel não produz commit, nem diff, nem entrada em lugar nenhum: **o id vira um fóssil do nome antigo**, e quem lê o fóssil conclui que o objeto morreu. É o D24 numa forma pior, porque não há divergência a detectar — os dois lados estão certos, e só a **ligação entre eles** está ausente. **O que fica:** (a) onde a doc cita um id de modelo, cita também o **nome de exibição atual**, com a marca de que houve renome — feito no `04`; (b) o `conferir_registros` ganha a classe `modelo_renomeado`, que compara o id citado na doc com o nome de exibição do painel; (c) a regra geral: **id é estável e nome de exibição não é — então conclusão tirada de nome de exibição precisa ser conferida no painel antes de virar ação**, e conclusão tirada do id precisa lembrar que ele pode ser fóssil. **O custo real deste caso:** entrou em três listas de pendência, gerou três opções de conserto com custo estimado, e a resposta era abrir uma tela. |
 
 ### INCIDENTE DE PRIVACIDADE — certidões de pessoas físicas indexadas (LGPD)
 
@@ -106,34 +107,15 @@
 - **Natureza:** funcionalidade nova de backend (Open WebUI não tem nativo) — job agendado sobre a tabela `chat` do Postgres, com **dry-run** antes de qualquer exclusão. A parte dos 90 dias é destrutiva → backup/confirmação.
 - **Decisão em aberto:** "comprimir" = compressão real do conteúdo (exige o app descomprimir na leitura, mexe no fork) **ou** arquivar (nativo, mais simples). A decidir antes de implementar.
 
-### `MODELO_GERAL` aponta para `nidum-10---dia-a-dia` — decisão pendente (05/09/2026)
+### `MODELO_GERAL` — ENCERRADO em 05/09/2026: não havia nada para trocar
 
-> **Não mexi no código, de propósito.** O default não é verificável offline, e
-> trocar um default que eu não consigo conferir seria repetir exatamente o D24.
+> **A conclusão inverte o que três pessoas achavam.** O wrapper `nidum-10---dia-a-dia`
+> **nunca foi revogado — foi renomeado.** Hoje ele se chama **“Nidum 1.0 - Geral”** no
+> painel, e o **id continua o mesmo**. A valve está correta, o default no código está
+> correto, e as três saídas que eu havia proposto respondiam a um problema que não existe.
 
-O que o código diz (`chatnd.py:4179-4182`), e o comentário é explícito: o apontamento
-**é deliberado** — `MODELO_GERAL` usa o mesmo wrapper que era o “Dia A Dia” porque
-**o Gerador de Arquivos já está anexado a ele**, e criar wrapper novo exigiria lembrar
-de reanexar a tool: *“é o clique que ninguém lembra”*.
+Verificado pelo Davi, abrindo o modelo no painel. Registrado como caso do D24 — ver **D39**.
 
-O que não sei: **se esse wrapper ainda existe no painel.** Na sessão A.2 apareceram
-modelos revogados e renomeados, e este é alcançado por `bypass_filter=True`, sem passar
-por `process_chat_payload` — ou seja, um wrapper revogado não produziria erro visível na
-rota, só comportamento diferente.
-
-**As três saídas, e o que cada uma custa:**
-
-1. **Confirmar no painel que o wrapper existe** e deixar como está. Custo: um olhar.
-   É a opção certa se ele existe — o motivo original continua válido.
-2. **Criar wrapper próprio para `geral`** e reanexar o Gerador. Custo: o clique que o
-   comentário diz que ninguém lembra — e, se esquecido, o `geral` perde a geração de
-   arquivos **em silêncio**. Só vale se houver razão para os dois divergirem.
-3. **Esvaziar o default** (como se fez com `BASE_CONHECIMENTO_ID`) e obrigar o painel a
-   decidir. Custo: instalação nova quebra até alguém preencher — que é a intenção:
-   falhar alto em vez de apontar para lugar errado.
-
-Minha leitura, sem decidir: **(1) se o wrapper existe, (3) se não existe.** A (2) só se
-houver produto por trás, e não para arrumar nome.
 ### Outras pendências em aberto
 | Pendência | Natureza | Observação |
 |---|---|---|
