@@ -992,9 +992,30 @@ def _lista(value):
     return [value]
 
 
+def _quebras(txt):
+    # SEPARADOR DE PARAGRAFO -> QUEBRA NORMAL.
+    #
+    # Texto vindo de documento (Word, PowerPoint, PDF convertido) usa VT (\x0b)
+    # onde o autor apertou Shift+Enter, e FF (\x0c) na quebra de pagina. O Word
+    # chama os dois de "quebra"; o Python nao - str.split("\n") ignora ambos.
+    #
+    # O efeito era MUDO, que e o pior tipo: o bloco virava UMA linha so, o separador
+    # sobrava dentro do texto como caractere de controle, e o PowerPoint desenhava um
+    # retangulo vazio no meio da frase. Sem erro, sem log - um slide feio que ninguem
+    # liga ao caractere que o causou.
+    #
+    # Normaliza UMA vez, na fronteira: daqui para dentro so existe "\n".
+    # \r\n e \r entram junto por terem a mesma origem (arquivo que passou por
+    # Windows ou por Mac antigo); LS/PS (\u2028/\u2029) pela mesma razao, vindos de
+    # copiar-colar de PDF.
+    t = str(txt or "")
+    for bruto in ("\r\n", "\r", "\x0b", "\x0c", "\u2028", "\u2029"):
+        t = t.replace(bruto, "\n")
+    return t
+
 def _texto_para_slide(txt):
     # Converte uma string "Titulo\n- bullet\n- bullet\ntexto" em slide dict.
-    linhas = [l.strip() for l in str(txt).split("\n") if l.strip()]
+    linhas = [l.strip() for l in _quebras(txt).split("\n") if l.strip()]
     titulo = ""
     bullets = []
     textos = []
@@ -1015,7 +1036,7 @@ def _texto_para_slide(txt):
 
 def _texto_para_secao(txt):
     # Converte uma string "Heading\n- bullet\nparagrafo" em secao dict.
-    linhas = [l.strip() for l in str(txt).split("\n") if l.strip()]
+    linhas = [l.strip() for l in _quebras(txt).split("\n") if l.strip()]
     heading = ""
     paragrafos = []
     bullets = []
@@ -1256,6 +1277,17 @@ def _normalizar_corpo_slides(slides, metodo="gerar_pptx"):
             valor = _campo_alias(s, aliases, metodo)
             if valor and not s.get(aliases[0]):
                 s[aliases[0]] = valor
+        # QUEBRAS na fronteira: o texto pode vir de documento (VT/FF do Word) tanto
+        # pela string solta quanto por este caminho, quando o modelo copia um trecho
+        # de fonte para dentro do campo. Normalizar so no _texto_para_slide deixaria
+        # metade do problema de pe - e a metade que aparece no slide.
+        for campo in (_ALIAS_TEXTO[0], "titulo", "subtitulo", "antetitulo"):
+            if isinstance(s.get(campo), str):
+                s[campo] = _quebras(s[campo])
+        for campo in (_ALIAS_BULLETS[0], _ALIAS_ITENS[0]):
+            if isinstance(s.get(campo), list):
+                s[campo] = [_quebras(x) if isinstance(x, str) else x
+                            for x in s[campo]]
         tipo = _fold(s.get("tipo"))
         if tipo in _TIPOS_EXIGEM_CORPO:
             tem_corpo = bool(
