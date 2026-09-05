@@ -366,6 +366,20 @@ def conferir(plataforma=None, esteira=None):
                     "id de colecao muda e some; doc que cita id morto manda o "
                     "leitor para uma colecao que nao existe"))
 
+    # Sem o repo da esteira, DUAS classes nao rodam. Declarar isso e a mesma regra
+    # que vale para a base_indevida, e ela nao pode valer so para metade: o aviso
+    # que existia era um print no comeco, e print rola para fora da tela enquanto o
+    # relatorio final - o que alguem le - dizia "nada encontrado" nas duas.
+    if not (esteira and os.path.isdir(os.path.join(esteira, "_scripts"))):
+        for classe in ("id_fantasma", "fixture_vencida"):
+            achados.append(_achado(
+                "nao_conferido",
+                "%s NAO foi conferida: o repositorio da esteira nao esta "
+                "disponivel neste ambiente" % classe,
+                "ambiente de execucao",
+                "classe nao conferida contada como 'nada encontrado' e a forma "
+                "mais silenciosa de um conferidor mentir"))
+
     # F - FRAC_CATASTROFE fora do valor de desenho (variavel de repo da esteira).
     # Le do ambiente: na Action vem de vars.FRAC_CATASTROFE; na mao, de quem exportar.
     # Ausente NAO acusa - sem variavel vale o padrao do workflow, que ja e 0,25.
