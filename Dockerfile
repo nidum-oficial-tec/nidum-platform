@@ -60,6 +60,18 @@ ARG GID
 # Python settings
 ENV PYTHONUNBUFFERED=1
 
+# NIDUM (2026-09-06, branch fix/malloc-arena-max) - PASSO 1 do conserto de memoria.
+# Medido em producao: 896 threads no PID 1, so 37 Python; o resto sao times
+# OpenMP/BLAS parados em futex. A RAM nao esta nas pilhas (0,05 GB) - esta nas
+# ARENAS do glibc: 457 heaps de ate 64 MiB = 9,29 GB de 12,75 GB do container.
+# Cada thread que aloca ganha arena propria (teto default 8 x nucleos do HOST =
+# 384 - e os.cpu_count() ve 48, nao os 24 do cgroup). MALLOC_ARENA_MAX=2 cerca
+# isso; nao custa latencia (so contencao de malloc, app I/O-bound). O PASSO 2
+# (OMP_NUM_THREADS=8 etc.) vai como variavel do Railway DEPOIS de observar este,
+# porque esse sim custa latencia (reranker/Whisper). Ver
+# _nidum_manutencao/RUNBOOK_THREADS_ARENAS.md.
+ENV MALLOC_ARENA_MAX=2
+
 ## Basis ##
 ENV ENV=prod \
     PORT=8080 \
